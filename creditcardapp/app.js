@@ -632,11 +632,17 @@ function populateRecCardFilter() {
                             <div style="font-weight:600;">${p.name}</div>
                             <div style="font-size:12px; color:var(--sub-text);">${p.merchantName || ''} · 费率 ${p.feeRate}%</div>
                         </div>
-                        <button onclick="delFeePreset(${JSON.stringify(p.id)})" class="btn btn-outline" style="width:auto; padding:8px 12px; margin-top:0;">删除</button>
+                        <button data-preset-id="${p.id}" class="btn btn-outline preset-del-btn" style="width:auto; padding:8px 12px; margin-top:0;">删除</button>
                     </div>
                 </div>`;
             });
             list.innerHTML = html;
+            list.querySelectorAll('.preset-del-btn').forEach(btn => {
+                btn.addEventListener('click', () => {
+                    const pid = btn.getAttribute('data-preset-id');
+                    delFeePreset(pid);
+                });
+            });
         }
 
         function populatePresetSelect() {
