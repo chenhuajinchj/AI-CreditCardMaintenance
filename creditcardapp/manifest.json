@@ -1,0 +1,16 @@
+{
+    "name": "信用卡智囊",
+    "short_name": "帅总智囊",
+    "start_url": "./index.html",
+    "display": "standalone",
+    "background_color": "#F2F2F7",
+    "theme_color": "#007AFF",
+    "orientation": "portrait",
+    "icons": [
+      {
+        "src": "icon.png",
+        "sizes": "512x512",
+        "type": "image/png"
+      }
+    ]
+  }

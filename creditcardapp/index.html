@@ -1,0 +1,1707 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no">
+    <title>信用卡智囊 (V5.0 仪表盘)</title>
+    <link rel="manifest" href="manifest.json">
+<link rel="apple-touch-icon" href="icon.png">
+<meta name="apple-mobile-web-app-capable" content="yes">
+<meta name="apple-mobile-web-app-status-bar-style" content="black-translucent">
+    <!-- 图表库：Chart.js -->
+    <script src="https://cdn.jsdelivr.net/npm/chart.js"></script>
+    <!-- Supabase SDK -->
+    <script src="https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2"></script>
+    <style>
+        /* --- 1. 基础变量（Apple 风格） --- */
+        :root { 
+            --primary: #007AFF;
+            --bg: #F2F2F7;
+            --bg-gradient: radial-gradient(circle at 0 0, #ffffff 0, #f5f5f7 40%, #e8ecf5 100%);
+            --card-bg: rgba(255,255,255,0.96);
+            --card-border: rgba(0,0,0,0.06);
+            --text: #111827;
+            --sub-text: #8E8E93;
+            --danger: #FF3B30;
+            --success: #34C759;
+            --radius: 18px;
+            --shadow-soft: 0 18px 40px rgba(15,23,42,0.12);
+        }
+        body {
+            font-family: -apple-system, BlinkMacSystemFont, system-ui, -apple-system-font, "SF Pro Text", "SF Pro Display", sans-serif;
+            background: var(--bg-gradient);
+            color: var(--text);
+            margin: 0;
+            padding: 0 0 100px 0;
+            -webkit-tap-highlight-color: transparent;
+            -webkit-font-smoothing: antialiased;
+            -moz-osx-font-smoothing: grayscale;
+            font-variant-numeric: tabular-nums;
+            overflow-x: hidden;
+        }
+        .container {
+            max-width: 640px;
+            margin: 0 auto;
+            padding: 20px 20px 24px;
+            box-sizing: border-box;
+        }
+        .sync-status {
+            max-width: 640px;
+            margin: 0 auto;
+            padding: 6px 20px 0;
+            box-sizing: border-box;
+            color: var(--sub-text);
+            font-size: 12px;
+            display: none; /* 默认隐藏 */
+            align-items: center;
+            gap: 8px;
+        }
+        .sync-dot {
+            width: 10px;
+            height: 10px;
+            border-radius: 50%;
+            background: #22c55e;
+            box-shadow: 0 0 0 4px rgba(34,197,94,0.12);
+        }
+        
+        /* 资产总览卡片 */
+        .summary-card {
+            background: linear-gradient(145deg, rgba(18,28,56,0.92), rgba(32,52,88,0.82));
+            color: #E5E7EB;
+            border-radius: var(--radius);
+            padding: 24px 20px;
+            margin-bottom: 18px;
+            box-shadow: 0 18px 40px rgba(12,20,38,0.5);
+            border: 1px solid rgba(255,255,255,0.08);
+            backdrop-filter: blur(16px);
+            -webkit-backdrop-filter: blur(16px);
+        }
+        .summary-title {
+            font-size: 16px;
+            font-weight: 600;
+            margin-bottom: 16px;
+            opacity: 0.9;
+            display: inline-flex;
+            align-items: center;
+            gap: 8px;
+        }
+        .summary-grid {
+            display: grid;
+            grid-template-columns: 1fr 1fr;
+            gap: 16px;
+        }
+        .summary-item {
+            display: flex;
+            flex-direction: column;
+        }
+        .summary-label {
+            font-size: 12px;
+            opacity: 0.8;
+            margin-bottom: 6px;
+        }
+        .summary-val {
+            font-size: 22px;
+            font-weight: 700;
+        }
+        .icon {
+            width: 20px;
+            height: 20px;
+            display: inline-block;
+            vertical-align: middle;
+            color: currentColor;
+        }
+        .icon-24 { width: 24px; height: 24px; }
+        .icon-16 { width: 16px; height: 16px; }
+        
+        /* 刷新按钮 */
+        .refresh-btn {
+            display: inline-flex;
+            align-items: center;
+            justify-content: center;
+            width: 24px;
+            height: 24px;
+            margin-left: 6px;
+            border-radius: 50%;
+            background: rgba(37,99,235,0.15);
+            border: none;
+            cursor: pointer;
+            font-size: 14px;
+            transition: transform 0.2s, background 0.2s;
+            vertical-align: middle;
+        }
+        .refresh-btn svg {
+            width: 14px;
+            height: 14px;
+        }
+        .refresh-btn:active {
+            transform: rotate(180deg) scale(0.9);
+            background: rgba(37,99,235,0.25);
+        }
+        
+        /* 顶部标题样式 */
+        h2 {
+            font-size: 24px;
+            font-weight: 700;
+            letter-spacing: -0.02em;
+            margin: 4px 0 18px;
+        }
+        
+        /* --- 2. 深色模式（对齐 Apple 深色） --- */
+        body.dark {
+            --bg: #000000;
+            --bg-gradient: radial-gradient(circle at 0 0, #111827 0, #020617 45%, #000000 100%);
+            --card-bg: rgba(22,22,24,0.98);
+            --card-border: rgba(148,163,184,0.16);
+            --text: #F9FAFB;
+            --sub-text: #9CA3AF;
+            --shadow-soft: 0 20px 45px rgba(0,0,0,0.7);
+        }
+        
+        /* --- 3. 新版卡片 (Dashboard 风格 / 毛玻璃卡片) --- */
+        .dashboard-card {
+            background: var(--card-bg);
+            border-radius: var(--radius);
+            padding: 20px 18px;
+            margin-bottom: 18px;
+            box-shadow: var(--shadow-soft);
+            border: 1px solid var(--card-border);
+            position: relative;
+            overflow: hidden;
+            backdrop-filter: blur(18px);
+            -webkit-backdrop-filter: blur(18px);
+        }
+        .card-header {
+            display: flex;
+            justify-content: space-between;
+            align-items: center;
+            margin-bottom: 14px;
+        }
+        .card-name {
+            font-size: 18px;
+            font-weight: 700;
+        }
+        .card-limit {
+            font-size: 13px;
+            color: var(--sub-text);
+        }
+        
+        /* 进度条 */
+        .progress-bg {
+            height: 8px;
+            background: rgba(15,23,42,0.06);
+            border-radius: 999px;
+            overflow: hidden;
+            margin-bottom: 16px;
+        }
+        body.dark .progress-bg { background: rgba(148,163,184,0.25); }
+        .progress-bar {
+            height: 100%;
+            background: linear-gradient(90deg, #0EA5E9, #2563EB, #4F46E5);
+            border-radius: 999px;
+            width: 0%;
+            transition: width 0.45s ease-out;
+        }
+        
+        /* 数据网格 */
+        .stat-grid {
+            display: grid;
+            grid-template-columns: 1fr 1fr;
+            gap: 14px;
+        }
+        .stat-item {
+            display: flex;
+            flex-direction: column;
+        }
+        .stat-label {
+            font-size: 12px;
+            color: var(--sub-text);
+            margin-bottom: 4px;
+        }
+        .stat-val {
+            font-size: 16px;
+            font-weight: 600;
+        }
+        .highlight-val {
+            color: var(--primary);
+            font-size: 20px;
+        }
+        .summary-card svg {
+            flex-shrink: 0;
+        }
+        
+        /* 建议气泡 */
+        .suggest-pill {
+            margin-top: 14px;
+            background: linear-gradient(135deg, rgba(37,99,235,0.12), rgba(56,189,248,0.08));
+            color: var(--primary);
+            padding: 9px 12px;
+            border-radius: 999px;
+            font-size: 13px;
+            display: flex;
+            align-items: center;
+            gap: 8px;
+        }
+        .suggest-pill svg {
+            width: 16px;
+            height: 16px;
+        }
+        body.dark .suggest-pill {
+            background: linear-gradient(135deg, rgba(96,165,250,0.24), rgba(34,211,238,0.16));
+            color: #E0F2FE;
+        }
+
+        /* --- 4. 按钮与浮动按钮 --- */
+        .btn {
+            background: linear-gradient(135deg, #0EA5E9, #2563EB);
+            color: #fff;
+            border: none;
+            padding: 13px 14px;
+            border-radius: 14px;
+            width: 100%;
+            font-weight: 600;
+            font-size: 16px;
+            margin-top: 10px;
+            box-shadow: 0 12px 25px rgba(37,99,235,0.35);
+            transition: transform 0.12s ease-out, box-shadow 0.12s ease-out, opacity 0.12s;
+        }
+        .btn:active {
+            transform: scale(0.97) translateY(1px);
+            box-shadow: 0 8px 20px rgba(37,99,235,0.45);
+        }
+        .btn:disabled {
+            opacity: 0.6;
+            cursor: not-allowed;
+            transform: none !important;
+            pointer-events: none;
+        }
+        .btn.loading {
+            position: relative;
+            color: transparent !important;
+        }
+        .btn.loading::after {
+            content: '';
+            position: absolute;
+            top: 50%;
+            left: 50%;
+            transform: translate(-50%, -50%);
+            width: 18px;
+            height: 18px;
+            border: 2px solid rgba(255,255,255,0.3);
+            border-top-color: #FFFFFF;
+            border-radius: 50%;
+            animation: spin 0.8s linear infinite;
+        }
+        @keyframes spin {
+            to { transform: translate(-50%, -50%) rotate(360deg); }
+        }
+        .btn-outline {
+            background: transparent;
+            border: 1px solid var(--primary);
+            color: var(--primary);
+            box-shadow: none;
+        }
+        .btn-outline.loading::after {
+            border-color: rgba(0,122,255,0.3);
+            border-top-color: var(--primary);
+        }
+        .btn-danger {
+            background: #f43f5e;
+            box-shadow: 0 12px 24px rgba(248,113,113,0.38);
+        }
+        .fab {
+            position: fixed;
+            bottom: 92px;
+            right: 22px;
+            background: radial-gradient(circle at 30% 0, #f9fafb 0, #0f172a 40%, #020617 100%);
+            color: #F9FAFB;
+            width: 56px;
+            height: 56px;
+            border-radius: 50%;
+            display: flex;
+            align-items: center;
+            justify-content: center;
+            font-size: 30px;
+            box-shadow: 0 22px 45px rgba(15,23,42,0.7);
+            z-index: 90;
+            transform: translate3d(0,0,0);
+        }
+        .fab svg {
+            width: 24px;
+            height: 24px;
+        }
+        .fab:active {
+            transform: scale(0.96) translateY(1px);
+            box-shadow: 0 16px 36px rgba(15,23,42,0.85);
+        }
+        
+        /* 表单控件 */
+        input, select {
+            width: 100%;
+            padding: 13px 14px;
+            margin-bottom: 12px;
+            border: 1px solid rgba(148,163,184,0.35);
+            border-radius: 12px;
+            background: rgba(249,250,251,0.96);
+            color: var(--text);
+            box-sizing: border-box;
+            font-size: 15px;
+            outline: none;
+            transition: border-color 0.12s ease-out, box-shadow 0.12s ease-out, background-color 0.12s;
+        }
+        input:focus, select:focus {
+            border-color: rgba(59,130,246,0.9);
+            box-shadow: 0 0 0 2px rgba(59,130,246,0.3);
+            background: #ffffff;
+        }
+        body.dark input, body.dark select {
+            border-color: rgba(148,163,184,0.45);
+            background: rgba(15,23,42,0.9);
+        }
+
+        /* 底部 Tab 栏 */
+        .tab-bar {
+            position: fixed;
+            bottom: 0;
+            left: 0;
+            right: 0;
+            background: rgba(248,250,252,0.92);
+            border-top: 0.5px solid rgba(148,163,184,0.4);
+            display: flex;
+            justify-content: space-around;
+            padding: 8px 0 20px;
+            z-index: 100;
+            backdrop-filter: blur(18px);
+            -webkit-backdrop-filter: blur(18px);
+        }
+        body.dark .tab-bar {
+            background: rgba(15,23,42,0.96);
+            border-top-color: rgba(55,65,81,0.9);
+        }
+        .tab-item {
+            text-align: center;
+            font-size: 11px;
+            color: var(--sub-text);
+            flex: 1;
+        }
+        .tab-item.active {
+            color: var(--primary);
+            font-weight: 600;
+        }
+        .tab-icon {
+            display: block;
+            margin: 0 auto 2px;
+            width: 24px;
+            height: 24px;
+        }
+        .tab-item svg {
+            width: 24px;
+            height: 24px;
+        }
+
+        .page { 
+            display: none; 
+            opacity: 0;
+            transform: translateY(10px) scale(0.995);
+            transition: opacity 0.24s ease, transform 0.24s ease;
+            will-change: opacity, transform;
+        }
+        .page.active {
+            display: block;
+            opacity: 1;
+            transform: translateY(0) scale(1);
+        }
+        .page.leaving {
+            display: block;
+            opacity: 0;
+            transform: translateY(10px) scale(0.995);
+            pointer-events: none;
+        }
+
+        /* 图表容器高度控制 */
+        .chart-card {
+            height: 220px;
+        }
+
+        /* 记账类型单选按钮组 */
+        .type-group {
+            display: inline-flex;
+            gap: 12px;
+            margin: 6px 0 10px;
+        }
+        .type-option {
+            display: inline-flex;
+            align-items: center;
+            gap: 4px;
+            font-size: 13px;
+            color: var(--sub-text);
+        }
+        .type-option input {
+            width: auto;
+            margin: 0;
+        }
+
+        /* 深色模式开关（Apple 风格 Toggle） */
+        #dark-switch {
+            appearance: none;
+            -webkit-appearance: none;
+            width: 48px;
+            height: 28px;
+            border-radius: 999px;
+            background: #E5E7EB;
+            position: relative;
+            cursor: pointer;
+            box-shadow: inset 0 0 0 1px rgba(148,163,184,0.6);
+            transition: background 0.18s ease-out, box-shadow 0.18s ease-out;
+        }
+        #dark-switch::before {
+            content: "";
+            position: absolute;
+            top: 3px;
+            left: 3px;
+            width: 22px;
+            height: 22px;
+            border-radius: 999px;
+            background: #FFFFFF;
+            box-shadow: 0 4px 10px rgba(148,163,184,0.8);
+            transition: transform 0.18s ease-out, box-shadow 0.18s ease-out, background 0.18s;
+        }
+        #dark-switch:checked {
+            background: linear-gradient(135deg, #0EA5E9, #2563EB);
+            box-shadow: inset 0 0 0 1px rgba(37,99,235,0.3);
+        }
+        #dark-switch:checked::before {
+            transform: translateX(20px);
+            box-shadow: 0 4px 10px rgba(37,99,235,0.8);
+        }
+
+        /* 登录页面 - 全屏固定，完全隔离 */
+        #page-auth {
+            position: fixed;
+            top: 0;
+            left: 0;
+            width: 100%;
+            height: 100%;
+            z-index: 9999;
+            display: flex;
+            align-items: center;
+            justify-content: center;
+            background: var(--bg-gradient);
+            padding: 20px;
+            overflow-y: auto;
+            -webkit-overflow-scrolling: touch;
+        }
+        #page-auth.hidden {
+            display: none !important;
+        }
+        .auth-card {
+            width: 100%;
+            max-width: 380px;
+            background: var(--card-bg);
+            border-radius: 24px;
+            padding: 32px 24px;
+            box-shadow: var(--shadow-soft);
+            border: 1px solid var(--card-border);
+            backdrop-filter: blur(18px);
+            -webkit-backdrop-filter: blur(18px);
+        }
+        .auth-title {
+            font-size: 26px;
+            font-weight: 800;
+            text-align: center;
+            margin-bottom: 8px;
+            letter-spacing: -0.02em;
+        }
+        .auth-subtitle {
+            text-align: center;
+            font-size: 14px;
+            color: var(--sub-text);
+            margin-bottom: 28px;
+        }
+        .auth-actions {
+            display: flex;
+            gap: 12px;
+            margin-top: 8px;
+        }
+        .btn-ghost {
+            background: rgba(255,255,255,0.2);
+            border: 1px solid rgba(148,163,184,0.35);
+            color: var(--text);
+            box-shadow: none;
+        }
+
+        /* Toast 轻提示组件 */
+        .toast-container {
+            position: fixed;
+            top: 20px;
+            left: 50%;
+            transform: translateX(-50%);
+            z-index: 10000;
+            pointer-events: none;
+        }
+        .toast {
+            background: rgba(0, 0, 0, 0.85);
+            backdrop-filter: blur(20px);
+            -webkit-backdrop-filter: blur(20px);
+            color: #FFFFFF;
+            padding: 14px 20px;
+            border-radius: 12px;
+            font-size: 15px;
+            font-weight: 500;
+            display: flex;
+            align-items: center;
+            gap: 10px;
+            box-shadow: 0 8px 24px rgba(0, 0, 0, 0.3);
+            min-width: 200px;
+            max-width: 90%;
+            text-align: center;
+            justify-content: center;
+            opacity: 0;
+            transform: translateY(-20px) scale(0.98);
+            transition: opacity 0.32s ease, transform 0.32s ease;
+            pointer-events: auto;
+        }
+        .toast.show {
+            opacity: 1;
+            transform: translateY(0) scale(1);
+        }
+        .toast.success {
+            background: rgba(52, 199, 89, 0.95);
+        }
+        .toast.error {
+            background: rgba(255, 59, 48, 0.95);
+        }
+        .toast-icon {
+            font-size: 18px;
+            line-height: 1;
+        }
+        body.dark .toast {
+            background: rgba(0, 0, 0, 0.92);
+            box-shadow: 0 8px 24px rgba(0, 0, 0, 0.6);
+        }
+        body.dark .toast.success {
+            background: rgba(52, 199, 89, 0.92);
+        }
+        body.dark .toast.error {
+            background: rgba(255, 59, 48, 0.92);
+        }
+        
+        /* 设置页面连接状态 */
+        .sync-status-mini {
+            margin-top: 16px;
+            padding-top: 16px;
+            border-top: 1px solid rgba(148,163,184,0.2);
+            font-size: 12px;
+            color: var(--sub-text);
+            display: flex;
+            align-items: center;
+            gap: 6px;
+        }
+        .sync-status-mini-dot {
+            width: 6px;
+            height: 6px;
+            border-radius: 50%;
+            background: #22c55e;
+        }
+        body.dark .sync-status-mini {
+            border-top-color: rgba(148,163,184,0.3);
+        }
+    </style>
+</head>
+<body>
+
+    <!-- Toast 容器 -->
+    <div class="toast-container" id="toast-container"></div>
+
+    <div id="page-auth">
+        <div class="auth-card">
+            <div class="auth-title">信用卡智囊</div>
+            <div class="auth-subtitle">登录以同步您的卡片与流水数据</div>
+            <label>邮箱</label>
+            <input type="email" id="login-email" placeholder="you@example.com">
+            <label>密码</label>
+            <input type="password" id="login-password" placeholder="至少 6 位">
+            <div class="auth-actions">
+                <button id="btn-login" class="btn btn-outline" style="width:50%;" onclick="handleLogin()">登录</button>
+                <button id="btn-register" class="btn" style="width:50%;" onclick="handleRegister()">注册</button>
+            </div>
+        </div>
+    </div>
+
+
+    <div id="page-home" class="page container">
+        <h2 style="margin-bottom:20px;">资产概览</h2>
+        <div style="display:flex;justify-content:flex-end;margin:8px 0;">
+            <button class="btn" id="toggleChartBtn" onclick="toggleChart()">查看趋势</button>
+        </div>
+        <div id="chartCard" style="display:none;">
+            <div class="dashboard-card chart-card">
+                <canvas id="spendChart"></canvas>
+            </div>
+        </div>
+        <div id="card-dashboard"></div>
+        <div style="height:50px;"></div> </div>
+
+    <div id="page-records" class="page container">
+        <h2>账单流水</h2>
+        <div class="field" style="margin-bottom:12px;">
+            <div style="font-size:12px;opacity:.7;margin-bottom:6px;">筛选卡片</div>
+            <select id="recCardFilter"></select>
+        </div>
+        <div id="record-list"></div>
+        <div class="fab" onclick="showAddRecord()">
+            <svg class="icon icon-24" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round">
+                <path d="M12 5v14M5 12h14" />
+            </svg>
+        </div>
+    </div>
+
+    <div id="page-settings" class="page container">
+        <h2>设置</h2>
+        <div class="dashboard-card">
+            <div style="display:flex; justify-content:space-between; align-items:center;">
+                <span>深色模式</span>
+                <input type="checkbox" id="dark-switch" onchange="toggleDark()" style="width:auto; transform:scale(1.5);">
+            </div>
+            <hr style="border:0; border-top:1px solid #eee; margin:15px 0; opacity:0.1;">
+            <button onclick="exportData()" class="btn btn-outline">备份数据</button>
+            <button onclick="clearData()" class="btn btn-danger">清空重置</button>
+            <button onclick="handleLogout()" class="btn btn-outline" style="margin-top:12px;">退出登录</button>
+            <div class="sync-status-mini" id="sync-status-mini">
+                <span class="sync-status-mini-dot" id="sync-status-mini-dot"></span>
+                <span id="sync-status-mini-text">已连接</span>
+            </div>
+        </div>
+    </div>
+
+    <div id="page-add-card" class="page container">
+        <h2>新卡片</h2>
+        <div class="dashboard-card">
+            <label>名称</label><input type="text" id="c-name" placeholder="例如：招商Young">
+            <label>额度</label><input type="number" id="c-limit" placeholder="50000">
+            <label>账单日</label><input type="number" id="c-bill" placeholder="每月几号出账">
+            <label>卡号后4位（选填）</label><input type="text" id="c-tail" placeholder="8888" maxlength="4" pattern="[0-9]*">
+            <button id="btn-add-card" onclick="doAddCard()" class="btn">保存</button>
+            <button onclick="nav('home')" class="btn btn-outline">返回</button>
+        </div>
+    </div>
+
+    <div id="page-add-rec" class="page container">
+        <h2>记一笔</h2>
+        <div class="dashboard-card">
+            <label>选择卡片</label><select id="r-card"></select>
+            <label>日期</label><input type="date" id="r-date">
+            <label>金额</label><input type="number" id="r-amt" oninput="calc()">
+            <label>类型</label>
+            <div class="type-group">
+                <label class="type-option">
+                    <input type="radio" name="r-type" value="expense" checked> 消费
+                </label>
+                <label class="type-option">
+                    <input type="radio" name="r-type" value="repayment"> 还款
+                </label>
+            </div>
+            <div style="display:flex; gap:10px;">
+                <div style="flex:1"><label>费率%</label><input type="number" id="r-rate" value="0.60" oninput="calc()"></div>
+                <div style="flex:1"><label>手续费</label><input type="text" id="r-fee" disabled style="color:red"></div>
+            </div>
+            <label>商户</label><input type="text" id="r-merch">
+            <button id="btn-add-rec" onclick="doAddRec()" class="btn">确认</button>
+            <button onclick="nav('records')" class="btn btn-outline">返回</button>
+        </div>
+    </div>
+
+    <div class="tab-bar" id="tab-bar" style="display:none;">
+        <div class="tab-item" data-page="home" onclick="nav('home')">
+            <svg class="tab-icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round">
+                <path d="M4 20h16" />
+                <rect x="6" y="10" width="3.2" height="9.5" rx="1" />
+                <rect x="10.9" y="6" width="3.2" height="13.5" rx="1" />
+                <rect x="15.8" y="12" width="3.2" height="7.5" rx="1" />
+            </svg>
+            概览
+        </div>
+        <div class="tab-item" data-page="add-card" onclick="showAddCard()">
+            <svg class="tab-icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round">
+                <rect x="3.5" y="6" width="17" height="12" rx="2.5" />
+                <path d="M6 11h12" />
+                <path d="M7 14h3" />
+            </svg>
+            办卡
+        </div>
+        <div class="tab-item" data-page="records" onclick="nav('records')">
+            <svg class="tab-icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round">
+                <path d="M7 4.5h8.5L19.5 8V19a1.5 1.5 0 0 1-1.5 1.5H7A1.5 1.5 0 0 1 5.5 19V6a1.5 1.5 0 0 1 1.5-1.5Z"/>
+                <path d="M15.5 4.5V8H19" />
+                <path d="M8.5 12h7" />
+                <path d="M8.5 15.5h5" />
+            </svg>
+            流水
+        </div>
+        <div class="tab-item" data-page="settings" onclick="nav('settings')">
+            <svg class="tab-icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round">
+                <path d="M12 15.5a3.5 3.5 0 1 0 0-7 3.5 3.5 0 0 0 0 7Z" />
+                <path d="M19.4 13.5a7.6 7.6 0 0 0 0-3l2-1.6-2-3.5-2.5 1a7.6 7.6 0 0 0-2.6-1.5L14 1.5h-4l-.3 3.4a7.6 7.6 0 0 0-2.6 1.5l-2.5-1-2 3.5 2 1.6a7.6 7.6 0 0 0 0 3L.6 15.1l2 3.5 2.5-1a7.6 7.6 0 0 0 2.6 1.5l.3 3.4h4l.3-3.4a7.6 7.6 0 0 0 2.6-1.5l2.5 1 2-3.5Z" />
+            </svg>
+            设置
+        </div>
+    </div>
+
+    <script>
+        // --- State & Constants ---
+        const supabaseUrl = 'https://kcjlvxbffaxwpcrrxkbq.supabase.co';
+        const supabaseKey = 'eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZSIsInJlZiI6Imtjamx2eGJmZmF4d3BjcnJ4a2JxIiwicm9sZSI6ImFub24iLCJpYXQiOjE3NjQ5Mjc1ODAsImV4cCI6MjA4MDUwMzU4MH0.pVvLKUAWoWrQL2nWC9W4eOO_XrbOl_fJW75Z75WbCoY';
+        const supabase = window.supabase.createClient(supabaseUrl, supabaseKey);
+
+        let appState = { cards: [], records: [], dark: false };
+        let offlineMode = false;
+        let spendChart = null;
+        let currentUser = null;
+        let cardSuggestions = {}; // 存储每张卡片的建议金额（带随机因子）
+        let recFilterCard = 'ALL';
+        let showChart = false;
+        const GRACE_DAYS = 20;
+        const id = x => document.getElementById(x);
+        const genId = () => (crypto.randomUUID ? crypto.randomUUID() : `rec_${Date.now()}_${Math.random().toString(16).slice(2)}`);
+        const iconRefresh = `<svg class="icon icon-16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.75" stroke-linecap="round" stroke-linejoin="round"><path d="M4 4v5h5"/><path d="M20 20v-5h-5"/><path d="M5 9a7 7 0 0 1 12-3l1 1"/><path d="M19 15a7 7 0 0 1-12 3l-1-1"/></svg>`;
+        const iconCalendar = `<svg class="icon icon-16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round"><rect x="4" y="6" width="16" height="14" rx="3"/><path d="M8 3v3m8-3v3M4 10h16"/></svg>`;
+        const iconSparkle = `<svg class="icon icon-16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round"><path d="M12 4l1.4 3.2 3.4.3-2.6 2.3.8 3.3-3-1.7-3 1.7.8-3.3-2.6-2.3 3.4-.3z"/><path d="M6 3l.7 1.6 1.7.1-1.3 1.2.4 1.7-1.5-.9-1.5.9.4-1.7-1.3-1.2 1.7-.1z"/><path d="M18 15l.7 1.6 1.7.1-1.3 1.2.4 1.7-1.5-.9-1.5.9.4-1.7-1.3-1.2 1.7-.1z"/></svg>`;
+        const iconWallet = `<svg class="icon icon-16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round"><path d="M4 7.5A2.5 2.5 0 0 1 6.5 5h11A2.5 2.5 0 0 1 20 7.5v9A2.5 2.5 0 0 1 17.5 19h-11A2.5 2.5 0 0 1 4 16.5z"/><path d="M16 12h2.5"/><path d="M7 5V4a1 1 0 0 1 1-1h7.5"/></svg>`;
+
+        // --- Date & Strategy Calculations ---
+        function getNextBillDate(billDay = 1, today = new Date()) {
+            const day = billDay || 1;
+            let next = new Date(today.getFullYear(), today.getMonth(), day);
+            if (today.getDate() >= day) {
+                next = new Date(today.getFullYear(), today.getMonth() + 1, day);
+            }
+            return next;
+        }
+        function getLastBillDate(billDay = 1, today = new Date()) {
+            const day = billDay || 1;
+            let last = new Date(today.getFullYear(), today.getMonth(), day);
+            if (today.getDate() < day) {
+                last = new Date(today.getFullYear(), today.getMonth() - 1, day);
+            }
+            return last;
+        }
+        function calcBestCardSuggestion() {
+            const today = new Date();
+            let best = null;
+            (appState.cards || []).forEach(card => {
+                const nextBill = getNextBillDate(card.billDay, today);
+                const daysToNextBill = Math.max(0, Math.ceil((nextBill - today) / 86400000));
+                const freeDays = daysToNextBill + GRACE_DAYS;
+                if (!best || freeDays > best.freeDays) {
+                    best = {
+                        cardName: card.name || '未命名卡片',
+                        freeDays,
+                        daysToNextBill
+                    };
+                }
+            });
+            return best;
+        }
+        function buildMonthlySeries() {
+            const recs = appState.records || [];
+            const today = new Date();
+            const year = today.getFullYear();
+            const month = today.getMonth(); // 0-11
+            const daysInMonth = new Date(year, month + 1, 0).getDate();
+
+            const daily = new Array(daysInMonth).fill(0);
+
+            recs.forEach(r => {
+                if (!r.date) return;
+                const d = new Date(r.date);
+                if (d.getFullYear() !== year || d.getMonth() !== month) return;
+                // 仅统计消费；无 type 视为消费，repayment 忽略
+                if (r.type === 'repayment') return;
+                const day = d.getDate(); // 1..daysInMonth
+                daily[day - 1] += Number(r.amount) || 0;
+            });
+
+            const labels = [];
+            const data = [];
+            let acc = 0;
+            for (let i = 0; i < daysInMonth; i++) {
+                acc += daily[i];
+                labels.push((i + 1).toString());
+                data.push(acc);
+            }
+            return { labels, data };
+        }
+
+        // --- Storage & Sync ---
+        function ensureRecordIds() {
+            if (!appState.records) appState.records = [];
+            let mutated = false;
+            appState.records = appState.records.map(r => {
+                if (!r.id) {
+                    mutated = true;
+                    return { ...r, id: genId() };
+                }
+                return r;
+            });
+            if (mutated) {
+                try {
+                    localStorage.setItem('creditcardapp_backup', JSON.stringify(appState));
+                } catch (e) {
+                    console.warn('Failed to persist backup after id patch', e);
+                }
+            }
+        }
+
+        function setSyncStatus(status) {
+            // 更新设置页面的迷你状态显示
+            const miniDot = document.getElementById('sync-status-mini-dot');
+            const miniText = document.getElementById('sync-status-mini-text');
+            if (miniDot && miniText) {
+                if (status === 'syncing') {
+                    miniDot.style.background = '#f97316';
+                    miniText.textContent = '同步中...';
+                } else if (status === 'error') {
+                    miniDot.style.background = '#ef4444';
+                    miniText.textContent = '连接失败';
+                    showToast('同步失败，请检查网络连接', 'error');
+                } else {
+                    miniDot.style.background = '#22c55e';
+                    miniText.textContent = '已连接';
+                }
+            }
+        }
+
+        async function loadData() {
+            if (!currentUser) {
+                showAuthPage();
+                return;
+            }
+            setSyncStatus('syncing');
+            try {
+                const { data, error } = await supabase
+                    .from('user_data')
+                    .select('id, content')
+                    .eq('user_id', currentUser.id)
+                    .maybeSingle();
+                if (error) throw error;
+                if (!data) {
+                    // 首次用户，插入空数据
+                    const empty = { cards: [], records: [], dark: false };
+                    const { error: insertError } = await supabase
+                        .from('user_data')
+                        .insert({ user_id: currentUser.id, content: empty });
+                    if (insertError) throw insertError;
+                    appState = empty;
+                    populateRecCardFilter();
+                    setSyncStatus('synced');
+                    renderDashboard();
+                    renderRecs();
+                    if (showChart) renderSpendChart();
+                    return;
+                }
+                const content = (data && data.content) || {};
+                appState = {
+                    cards: content.cards || [],
+                    records: content.records || [],
+                    dark: content.dark || false
+                };
+                if (appState.dark) {
+                    document.body.classList.add('dark');
+                    const darkSwitch = document.getElementById('dark-switch');
+                    if (darkSwitch) darkSwitch.checked = true;
+                }
+                ensureRecordIds();
+                renderDashboard();
+                renderRecs();
+                populateRecCardFilter();
+                offlineMode = false;
+                setSyncStatus('synced');
+            } catch (e) {
+                console.error('loadData error', e);
+                const backup = localStorage.getItem('creditcardapp_backup');
+                offlineMode = true;
+                setSyncStatus('offline');
+                showToast('云端加载失败，已使用本地备份（离线模式）', 'warn');
+                if (backup) {
+                    try {
+                        appState = JSON.parse(backup);
+                        if (appState.dark) {
+                            document.body.classList.add('dark');
+                            const darkSwitch = document.getElementById('dark-switch');
+                            if (darkSwitch) darkSwitch.checked = true;
+                        }
+                        ensureRecordIds();
+                        renderDashboard();
+                        renderRecs();
+                        populateRecCardFilter();
+                    } catch (parseError) {
+                        console.error('Failed to parse backup data', parseError);
+                        appState = { cards: [], records: [], dark: false };
+                        renderDashboard();
+                        renderRecs();
+                        populateRecCardFilter();
+                    }
+                } else {
+                    appState = { cards: [], records: [], dark: false };
+                    renderDashboard();
+                    renderRecs();
+                    populateRecCardFilter();
+                }
+                setSyncStatus('error');
+            }
+        }
+
+        async function saveData() {
+            if (offlineMode) {
+                showToast('当前为离线模式：暂不自动同步到云端（避免覆盖）', 'warn');
+                return;
+            }
+            if (!currentUser) {
+                showAuthPage();
+                return;
+            }
+            setSyncStatus('syncing');
+            try {
+                const { error } = await supabase
+                    .from('user_data')
+                    .upsert({ user_id: currentUser.id, content: appState }, { onConflict: 'user_id' });
+                if (error) throw error;
+                setSyncStatus('synced');
+                localStorage.setItem('creditcardapp_backup', JSON.stringify(appState));
+            } catch (e) {
+                console.error('saveData error', e);
+                setSyncStatus('error');
+            }
+        }
+
+        // --- UI Renderers ---
+        function showToast(message, type = 'info') {
+            const container = document.getElementById('toast-container');
+            if (!container) return;
+            
+            const toast = document.createElement('div');
+            toast.className = `toast ${type}`;
+            
+            const icon = type === 'success' ? '✓' : type === 'error' ? '✕' : 'ℹ';
+            toast.innerHTML = `<span class="toast-icon">${icon}</span><span>${message}</span>`;
+            
+            container.appendChild(toast);
+            
+            // 触发动画
+            setTimeout(() => toast.classList.add('show'), 10);
+            
+            // 自动移除
+            setTimeout(() => {
+                toast.classList.remove('show');
+                setTimeout(() => {
+                    if (toast.parentNode) {
+                        toast.parentNode.removeChild(toast);
+                    }
+                }, 300);
+            }, 2500);
+        }
+
+        function setButtonLoading(buttonId, loading, originalText) {
+            const btn = typeof buttonId === 'string' ? document.getElementById(buttonId) : buttonId;
+            if (!btn) return;
+            
+            if (loading) {
+                // 保存原始文字
+                if (!btn.dataset.originalText) {
+                    btn.dataset.originalText = originalText || btn.textContent.trim();
+                }
+                btn.classList.add('loading');
+                btn.disabled = true;
+                // Loading 状态下文字会变透明，显示旋转图标
+                btn.textContent = '处理中...';
+            } else {
+                // 恢复按钮状态
+                btn.classList.remove('loading');
+                btn.disabled = false;
+                const restoreText = btn.dataset.originalText || originalText;
+                if (restoreText) {
+                    btn.textContent = restoreText;
+                    delete btn.dataset.originalText;
+                }
+            }
+        }
+
+        function populateRecCardFilter() {
+            const sel = document.getElementById('recCardFilter');
+            if (!sel) return;
+
+            const opts = ['<option value="ALL">全部</option>']
+                .concat((appState.cards || []).map(c => `<option value="${c.name}">${c.name}</option>`));
+
+            sel.innerHTML = opts.join('');
+            if (!(appState.cards || []).some(c => c.name === recFilterCard)) {
+                recFilterCard = 'ALL';
+            }
+            sel.value = recFilterCard;
+
+            sel.onchange = () => {
+                recFilterCard = sel.value;
+                renderRecs();
+            };
+        }
+
+        function toggleChart() {
+            showChart = !showChart;
+            const el = document.getElementById('chartCard');
+            const btn = document.getElementById('toggleChartBtn');
+            if (el) el.style.display = showChart ? 'block' : 'none';
+            if (btn) btn.textContent = showChart ? '收起趋势' : '查看趋势';
+            if (showChart) renderSpendChart();
+        }
+
+        function renderSpendChart() {
+            const canvas = document.getElementById('spendChart');
+            if (!canvas || typeof Chart === 'undefined') return;
+            const ctx = canvas.getContext('2d');
+            const { labels, data } = buildMonthlySeries();
+
+            const isDark = document.body.classList.contains('dark');
+            const textColor = isDark ? '#E5E7EB' : '#4B5563';
+            const gridColor = isDark ? 'rgba(148,163,184,0.35)' : 'rgba(148,163,184,0.4)';
+            const borderColor = '#3B82F6';
+            const bgColor = 'rgba(59,130,246,0.12)';
+
+            if (spendChart) {
+                spendChart.data.labels = labels;
+                spendChart.data.datasets[0].data = data;
+                spendChart.options.scales.x.ticks.color = textColor;
+                spendChart.options.scales.y.ticks.color = textColor;
+                spendChart.options.scales.y.grid.color = gridColor;
+                spendChart.update();
+                return;
+            }
+
+            spendChart = new Chart(ctx, {
+                type: 'line',
+                data: {
+                    labels,
+                    datasets: [{
+                        data,
+                        borderColor,
+                        backgroundColor: bgColor,
+                        borderWidth: 2.5,
+                        tension: 0.35,
+                        fill: true,
+                        pointRadius: 0,
+                        pointHitRadius: 10
+                    }]
+                },
+                options: {
+                    responsive: true,
+                    maintainAspectRatio: false,
+                    plugins: {
+                        legend: { display: false },
+                        tooltip: {
+                            mode: 'index',
+                            intersect: false,
+                            callbacks: {
+                                label: (ctx) => ' ¥' + (ctx.parsed.y || 0).toLocaleString()
+                            }
+                        }
+                    },
+                    scales: {
+                        x: {
+                            ticks: {
+                                color: textColor,
+                                maxTicksLimit: 8
+                            },
+                            grid: {
+                                display: false
+                            }
+                        },
+                        y: {
+                            ticks: {
+                                color: textColor,
+                                callback: (val) => '¥' + val
+                            },
+                            grid: {
+                                color: gridColor
+                            }
+                        }
+                    }
+                }
+            });
+        }
+
+        // 刷新单个卡片的建议金额（应用随机因子）
+        function refreshCardSuggestion(cardIndex) {
+            const cards = appState.cards || [];
+            const recs = appState.records || [];
+            if (cardIndex < 0 || cardIndex >= cards.length) return;
+            
+            const c = cards[cardIndex];
+            const today = new Date();
+            
+            // 重新计算本期已刷
+            let billDay = c.billDay;
+            let start = new Date(today.getFullYear(), today.getMonth(), billDay);
+            if(today.getDate() < billDay) start.setMonth(start.getMonth() - 1);
+            
+            let spent = 0;
+            recs.forEach(r => {
+                if(r.cardName === c.name && new Date(r.date) >= start) {
+                    if (r.type === 'repayment') spent -= r.amount;
+                    else spent += r.amount;
+                }
+            });
+            
+            // 重新计算基础建议值
+            let daysLeft = (today.getDate() < billDay ? billDay - today.getDate() : (30 - today.getDate() + billDay));
+            let target = c.limit * 0.65;
+            let baseSuggest = Math.max(0, (target - spent) / daysLeft);
+            
+            // 应用随机因子
+            if (baseSuggest > 0) {
+                const randomFactor = 0.9 + Math.random() * 0.2; // 0.9 ~ 1.1
+                cardSuggestions[c.name] = baseSuggest * randomFactor;
+            } else {
+                cardSuggestions[c.name] = 0;
+            }
+            
+            renderDashboard();
+            showToast('建议金额已刷新', 'success');
+        }
+
+        // --- 核心：渲染仪表盘 ---
+        function renderDashboard() {
+            const cards = appState.cards || [];
+            const recs = appState.records || [];
+            const div = document.getElementById('card-dashboard');
+            
+            if(!cards.length) {
+                div.innerHTML = '<p style="text-align:center;color:#999;margin-top:50px;">点击底部 "添加" 添加第一张卡片</p>';
+                return;
+            }
+
+            let html = '';
+            const today = new Date();
+
+            // 计算总览数据
+            let totalLimit = 0;
+            let totalSpent = 0;
+            let totalRemaining = 0;
+            let monthlyFee = 0;
+            (appState.records || []).forEach(r => {
+                const dt = r.ts ? new Date(r.ts) : (r.date ? new Date(r.date) : null);
+                if (!dt) return;
+                const isSameMonth = dt.getFullYear() === today.getFullYear() && dt.getMonth() === today.getMonth();
+                if (isSameMonth) monthlyFee += Number(r.fee || 0);
+            });
+
+            cards.forEach((c, idx) => {
+                // 1. 统计本期已刷 (逻辑简化：找最近一个账单日之后的消费)
+                let billDay = c.billDay || 1;
+                let start = new Date(today.getFullYear(), today.getMonth(), billDay);
+                if(today.getDate() < billDay) start.setMonth(start.getMonth() - 1); // 如果今天还没到账单日，就算上个月账单日开始
+                
+                let spent = 0;
+                let txCount = 0;
+                recs.forEach(r => {
+                    if(r.cardName === c.name && new Date(r.date) >= start) {
+                        // 类型：消费增加额度，还款减少额度；旧数据无 type 时按消费处理
+                        if (r.type === 'repayment') spent -= r.amount;
+                        else spent += r.amount;
+                    }
+                });
+                const lastBillDate = getLastBillDate(c.billDay, today);
+                recs.forEach(r => {
+                    if (r.cardName === c.name) {
+                        const rd = r.ts ? new Date(r.ts) : (r.date ? new Date(r.date) : null);
+                        if (rd && rd >= lastBillDate) txCount += 1;
+                    }
+                });
+
+                // 2. 计算建议（基础值，不使用随机因子）
+                let daysLeft = (today.getDate() < billDay ? billDay - today.getDate() : (30 - today.getDate() + billDay));
+                let target = c.limit * 0.65; // 目标 65%
+                let baseSuggest = Math.max(0, (target - spent) / daysLeft);
+                
+                // 如果卡片没有存储过建议值，则初始化为基础值（不应用随机因子）
+                if (!(c.name in cardSuggestions)) {
+                    cardSuggestions[c.name] = baseSuggest;
+                }
+                
+                // 使用存储的建议值（可能包含随机因子，如果用户点击过刷新）
+                let suggest = cardSuggestions[c.name];
+
+                // 3. 计算进度条颜色
+                let percent = (spent / c.limit) * 100;
+                let color = '#007AFF';
+                if(percent > 80) color = '#FF3B30'; // 红色警戒
+                else if(percent > 60) color = '#FF9500'; // 黄色注意
+                
+                // 4. 累计总览数据
+                totalLimit += c.limit;
+                totalSpent += spent;
+                totalRemaining += (c.limit - spent);
+                
+                // 5. 显示卡片名称（含尾号）
+                const tailNumDisplay = c.tailNum ? ` (${c.tailNum})` : '';
+                
+                html += `
+                <div class="dashboard-card">
+                    <div class="card-header">
+                        <span class="card-name">${c.name}${tailNumDisplay}</span>
+                        <span class="card-limit">额度 ¥${c.limit/10000}万</span>
+                    </div>
+                    
+                    <div class="progress-bg">
+                        <div class="progress-bar" style="width:${Math.min(100, percent)}%; background:${color}"></div>
+                    </div>
+                    
+                    <div class="stat-grid">
+                        <div class="stat-item">
+                            <span class="stat-label">本期已刷</span>
+                            <span class="stat-val">¥${spent.toLocaleString()}</span>
+                        </div>
+                        <div class="stat-item" style="text-align:right;">
+                            <span class="stat-label">今日建议</span>
+                            <span class="stat-val highlight-val">
+                                ${suggest>1 ? '¥'+suggest.toFixed(0) : iconSparkle + '无需刷'}
+                                <button class="refresh-btn" onclick="refreshCardSuggestion(${idx})" title="刷新建议">${iconRefresh}</button>
+                            </span>
+                        </div>
+                        <div class="stat-item" style="grid-column:1 / span 2;">
+                            <span class="stat-label">本期已刷</span>
+                            <span class="stat-val">已刷 ${txCount} 笔</span>
+                        </div>
+                    </div>
+
+                    <div class="suggest-pill">
+                        <span>${iconCalendar}</span>
+                        <span>距离账单日还有 <b>${daysLeft}</b> 天，建议本期控制在 ¥${target.toLocaleString()}</span>
+                    </div>
+                    
+                    <div style="text-align:right; margin-top:10px; display:flex; justify-content:flex-end; gap:10px;">
+                        <button onclick="openRecsForCard(${JSON.stringify(c.name)})" style="background:none; border:none; color:var(--primary); font-size:12px; cursor:pointer;">查看流水</button>
+                        <button onclick="delCard(${idx})" style="background:none; border:none; color:#ccc; font-size:12px;">删除卡片</button>
+                    </div>
+                </div>`;
+            });
+            
+            // 在顶部插入总览卡片
+            const best = calcBestCardSuggestion();
+            const bestCardHtml = `
+                <div class="dashboard-card">
+                    <div class="card-header">
+                        <span class="card-name">今日最佳刷卡</span>
+                        <span class="card-limit" style="color:var(--sub-text)">免息期优先推荐</span>
+                    </div>
+                    ${!best ? '<div style="color:var(--sub-text);">请先添加信用卡</div>' : `
+                    <div style="font-size:22px; font-weight:700; margin-bottom:8px;">${best.cardName}</div>
+                    <div style="display:flex; gap:12px; color:var(--sub-text); font-size:13px;">
+                        <span>免息期约 <b style="color:var(--text);">${best.freeDays}</b> 天</span>
+                        <span>距下次账单日 <b style="color:var(--text);">${best.daysToNextBill}</b> 天</span>
+                    </div>
+                    `}
+                </div>
+            `;
+            const summaryHtml = `
+                <div class="summary-card">
+                    <div class="summary-title">${iconWallet} 总资产概览</div>
+                    <div class="summary-grid">
+                        <div class="summary-item">
+                            <span class="summary-label">总额度</span>
+                            <span class="summary-val">¥${(totalLimit/10000).toFixed(1)}万</span>
+                        </div>
+                        <div class="summary-item">
+                            <span class="summary-label">本期已刷</span>
+                            <span class="summary-val">¥${totalSpent.toLocaleString()}</span>
+                        </div>
+                        <div class="summary-item">
+                            <span class="summary-label">剩余额度</span>
+                            <span class="summary-val">¥${totalRemaining.toLocaleString()}</span>
+                        </div>
+                        <div class="summary-item">
+                            <span class="summary-label">使用率</span>
+                            <span class="summary-val">${totalLimit > 0 ? ((totalSpent/totalLimit)*100).toFixed(1) : 0}%</span>
+                        </div>
+                        <div class="summary-item" style="grid-column:1 / span 2;">
+                            <span class="summary-label">本月预估手续费</span>
+                            <span class="summary-val">¥${monthlyFee.toFixed(2)}</span>
+                        </div>
+                    </div>
+                </div>
+            `;
+            
+            div.innerHTML = summaryHtml + bestCardHtml + html;
+            const chartEl = document.getElementById('chartCard');
+            const chartBtn = document.getElementById('toggleChartBtn');
+            if (chartEl) chartEl.style.display = showChart ? 'block' : 'none';
+            if (chartBtn) chartBtn.textContent = showChart ? '收起趋势' : '查看趋势';
+            if (showChart) renderSpendChart();
+        }
+
+        // --- 记账与流水 ---
+        function renderRecs() {
+            const recs = (appState.records || []).filter(r => recFilterCard === 'ALL' || r.cardName === recFilterCard);
+            const div = document.getElementById('record-list');
+            if(!recs.length) return div.innerHTML = '<p style="text-align:center;color:#999;">暂无流水</p>';
+            
+            let html = '';
+            recs.forEach((r,i) => {
+                const isRepay = r.type === 'repayment';
+                const amountSign = isRepay ? '+ ' : '- ';
+                const amountColor = isRepay ? 'var(--success)' : 'var(--text)';
+                const feeText = isRepay ? '无手续费' : `手续费 ¥${r.fee.toFixed(2)}`;
+                const feeColor = isRepay ? 'var(--sub-text)' : 'var(--danger)';
+                html += `
+                <div class="dashboard-card" style="padding:15px; margin-bottom:10px;">
+                    <div style="display:flex; justify-content:space-between;">
+                        <span style="font-weight:600">${r.cardName}</span>
+                        <span style="font-weight:bold; font-size:18px; color:${amountColor};">${amountSign}${r.amount}</span>
+                    </div>
+                    <div style="display:flex; justify-content:space-between; margin-top:5px; font-size:12px; color:#888;">
+                        <span>${r.date} · ${r.merchant}${isRepay ? ' · 还款' : ''}</span>
+                        <span style="color:${feeColor}">${feeText}</span>
+                    </div>
+                    <div style="text-align:right; margin-top:5px;"><span onclick="delRec(${JSON.stringify(r.id)})" style="color:#ccc; font-size:12px;">删除</span></div>
+                </div>`;
+            });
+            div.innerHTML = html;
+        }
+
+        // --- 逻辑函数 ---
+        async function doAddCard() {
+            const name=id('c-name').value, limit=id('c-limit').value, bill=id('c-bill').value;
+            const tailNum = id('c-tail').value.trim();
+            if(!name) return showToast('请填写卡片名称', 'error');
+            
+            const btn = document.getElementById('btn-add-card');
+            setButtonLoading(btn, true, '保存');
+            
+            try {
+                const newCard = {name, limit:parseFloat(limit), billDay:parseInt(bill)};
+                if (tailNum) {
+                    newCard.tailNum = tailNum;
+                }
+                appState.cards.push(newCard);
+                await saveData();
+                populateRecCardFilter();
+                showToast('卡片添加成功', 'success');
+                nav('home');
+            } catch (e) {
+                showToast('保存失败：' + (e.message || '未知错误'), 'error');
+            } finally {
+                setButtonLoading(btn, false, '保存');
+            }
+        }
+        async function doAddRec() {
+            const idx=id('r-card').value, amt=parseFloat(id('r-amt').value), date=id('r-date').value;
+            if(!amt || !date) return showToast('请填写完整信息', 'error');
+            
+            const btn = document.getElementById('btn-add-rec');
+            setButtonLoading(btn, true, '确认');
+            
+            try {
+                let cards = appState.cards;
+                let recs = appState.records;
+                let rate = parseFloat(id('r-rate').value);
+                const typeInput = document.querySelector('input[name="r-type"]:checked');
+                const recType = typeInput ? typeInput.value : 'expense';
+                let fee = 0;
+                if (recType === 'expense') {
+                    fee = amt * rate / 100;
+            } else {
+                    fee = 0;
+                }
+                recs.unshift({
+                    id: genId(),
+                    cardName: cards[idx].name,
+                    amount: amt,
+                    fee,
+                    rate,
+                    type: recType,
+                    date,
+                    merchant: id('r-merch').value || (recType === 'repayment' ? '还款' : '消费'),
+                    ts: new Date(date).getTime()
+                });
+                recs.sort((a,b)=>b.ts-a.ts);
+                await saveData();
+                showToast('记账成功', 'success');
+                nav('records');
+                if (showChart) renderSpendChart();
+            } catch (e) {
+                showToast('保存失败：' + (e.message || '未知错误'), 'error');
+            } finally {
+                setButtonLoading(btn, false, '确认');
+            }
+        }
+        async function delCard(i) {
+            if(confirm('删?')) {
+                const removed = appState.cards[i]?.name;
+                appState.cards.splice(i,1);
+                if (removed) {
+                    appState.records = (appState.records||[]).filter(r=>r.cardName !== removed);
+                    // 删除对应的建议值
+                    delete cardSuggestions[removed];
+                    if (recFilterCard === removed) {
+                        recFilterCard = 'ALL';
+                    }
+                }
+                await saveData();
+                populateRecCardFilter();
+                renderDashboard();
+                renderRecs();
+                if (showChart) renderSpendChart();
+            }
+        }
+        async function delRec(recId) {
+            if(confirm('删?')) {
+                const idx = (appState.records || []).findIndex(r => r.id === recId);
+                if (idx === -1) return;
+                appState.records.splice(idx,1);
+                await saveData();
+                renderRecs();
+                if (showChart) renderSpendChart();
+            }
+        }
+        function calc() {
+            const typeInput = document.querySelector('input[name="r-type"]:checked');
+            const recType = typeInput ? typeInput.value : 'expense';
+            if (recType === 'repayment') {
+                id('r-fee').value = '0.00';
+                return;
+            }
+            id('r-fee').value = (id('r-amt').value * id('r-rate').value / 100).toFixed(2);
+        }
+        
+        // --- Routing & Events ---
+        function nav(p, opts = {}) {
+            const { fromHistory = false, replace = false } = opts;
+            p = normalizePage(p);
+            document.querySelectorAll('.tab-item').forEach(e=>e.classList.remove('active'));
+            switchPage(p, { fromHistory, replace });
+            if(p==='home') renderDashboard();
+            if(p==='records') {
+                populateRecCardFilter();
+                renderRecs();
+            }
+            if(p==='add-card') { id('c-name').value=''; id('c-limit').value=''; id('c-bill').value=''; id('c-tail').value=''; }
+            if(p==='add-rec') { 
+                id('r-date').value = new Date().toISOString().split('T')[0];
+                id('r-amt').value=''; id('r-fee').value='';
+                let opts=''; (appState.cards||[]).forEach((c,i)=>opts+=`<option value="${i}">${c.name}</option>`);
+                id('r-card').innerHTML = opts;
+                // 默认选择“消费”
+                const expenseRadio = document.querySelector('input[name="r-type"][value="expense"]');
+                if (expenseRadio) expenseRadio.checked = true;
+            }
+            const tab = document.querySelector(`.tab-item[data-page="${p}"]`);
+            if (tab) tab.classList.add('active');
+            const newHash = '#'+p;
+            if (!fromHistory && location.hash !== newHash) {
+                const method = replace ? 'replaceState' : 'pushState';
+                history[method]({ page: p }, '', newHash);
+            }
+        }
+        function showAddRecord() { nav('add-rec'); }
+        function showAddCard() { nav('add-card'); }
+        function openRecsForCard(cardName){
+            recFilterCard = cardName;
+            nav('records');
+        }
+        async function toggleDark() { 
+            const enabled = document.body.classList.toggle('dark'); 
+            const darkSwitch = document.getElementById('dark-switch');
+            if (darkSwitch) darkSwitch.checked = enabled;
+            appState.dark = enabled;
+            // 切换主题时更新图表文字和网格颜色
+            if (showChart) renderSpendChart();
+            await saveData();
+        }
+        async function exportData() {
+            try {
+                const dataStr = JSON.stringify(appState);
+                if (navigator.clipboard && navigator.clipboard.writeText) {
+                    await navigator.clipboard.writeText(dataStr);
+                    showToast('数据已复制', 'success');
+                } else {
+                    // 降级方案：创建临时文本区域
+                    const textArea = document.createElement('textarea');
+                    textArea.value = dataStr;
+                    textArea.style.position = 'fixed';
+                    textArea.style.opacity = '0';
+                    document.body.appendChild(textArea);
+                    textArea.select();
+                    document.execCommand('copy');
+                    document.body.removeChild(textArea);
+                    showToast('数据已复制', 'success');
+                }
+            } catch (e) {
+                showToast('复制失败：' + e.message, 'error');
+            }
+        }
+        async function clearData() { 
+            if(confirm('清空?')) { 
+                appState = { cards: [], records: [], dark: false };
+                document.body.classList.remove('dark');
+                const darkSwitch = document.getElementById('dark-switch');
+                if (darkSwitch) darkSwitch.checked = false;
+                recFilterCard = 'ALL';
+                await saveData();
+                renderDashboard();
+                renderRecs();
+                populateRecCardFilter();
+                if (showChart) renderSpendChart();
+            } 
+        }
+
+        const validPages = new Set(['home','records','settings','add-card','add-rec']);
+        function normalizePage(p) {
+            return validPages.has(p) ? p : 'home';
+        }
+        function switchPage(p, opts = {}) {
+            const { fromHistory = false, replace = false } = opts;
+            const targetId = 'page-' + p;
+            const current = document.querySelector('.page.active');
+            const next = document.getElementById(targetId);
+            if (!next) return;
+
+            if (current && current !== next) {
+                current.classList.remove('active');
+                current.classList.add('leaving');
+                setTimeout(() => {
+                    current.classList.remove('leaving');
+                    current.style.display = 'none';
+                }, 260);
+            }
+
+            // 确保立即显示后再触发过渡
+            next.style.display = 'block';
+            requestAnimationFrame(() => {
+                next.classList.add('active');
+            });
+
+            const newHash = '#' + p;
+            if (!fromHistory && location.hash !== newHash) {
+                const method = replace ? 'replaceState' : 'pushState';
+                history[method]({ page: p }, '', newHash);
+            }
+        }
+
+        // --- 登录与认证 ---
+        function showAuthPage() {
+            // 隐藏所有应用页面
+            document.querySelectorAll('.page').forEach(p => {
+                p.classList.remove('active');
+            });
+            // 显示登录页
+            const authPage = document.getElementById('page-auth');
+            if (authPage) {
+                authPage.classList.remove('hidden');
+            }
+            // 隐藏导航栏
+            const tabBar = document.getElementById('tab-bar');
+            if (tabBar) tabBar.style.display = 'none';
+            // 防止body滚动
+            document.body.style.overflow = 'hidden';
+        }
+        function showAppPages() {
+            // 隐藏登录页
+            const authPage = document.getElementById('page-auth');
+            if (authPage) {
+                authPage.classList.add('hidden');
+            }
+            const tabBar = document.getElementById('tab-bar');
+            if (tabBar) tabBar.style.display = 'flex';
+            document.body.style.overflow = '';
+        }
+
+        async function handleLogin() {
+            const email = (document.getElementById('login-email')||{}).value;
+            const password = (document.getElementById('login-password')||{}).value;
+            if(!email || !password) return showToast('请填写邮箱和密码', 'error');
+            
+                const btn = document.getElementById('btn-login');
+            setButtonLoading(btn, true, '登录');
+            setSyncStatus('syncing');
+            
+            try {
+                const { data, error } = await supabase.auth.signInWithPassword({ email, password });
+                if (error) { 
+                    setSyncStatus('error'); 
+                    return;
+                }
+                currentUser = data.user;
+                showAppPages();
+                showToast('欢迎回来', 'success');
+                await loadData();
+                const hashPage = normalizePage((location.hash || '').replace('#','') || 'home');
+                nav(hashPage, { replace: true });
+            } catch (e) {
+                setSyncStatus('error');
+            } finally {
+                setButtonLoading(btn, false, '登录');
+            }
+        }
+
+        async function handleRegister() {
+            const email = (document.getElementById('login-email')||{}).value;
+            const password = (document.getElementById('login-password')||{}).value;
+            if(!email || !password) return showToast('请填写邮箱和密码', 'error');
+            
+            const btn = document.getElementById('btn-register');
+            setButtonLoading(btn, true, '注册');
+            setSyncStatus('syncing');
+            
+            try {
+                const { data, error } = await supabase.auth.signUp({ email, password });
+                if (error) { 
+                    setSyncStatus('error'); 
+                    return;
+                }
+                setSyncStatus('synced');
+                showToast('注册成功，请登录', 'success');
+                // 清空密码框，让用户重新输入密码登录
+                document.getElementById('login-password').value = '';
+            } catch (e) {
+                setSyncStatus('error');
+            } finally {
+                setButtonLoading(btn, false, '注册');
+            }
+        }
+
+        async function handleLogout() {
+            await supabase.auth.signOut();
+            currentUser = null;
+            appState = { cards: [], records: [], dark: false };
+            showAuthPage();
+            location.reload();
+        }
+
+        async function initAuth() {
+            const { data: { session }, error } = await supabase.auth.getSession();
+            if (error || !session || !session.user) {
+                showAuthPage();
+                return false;
+            }
+            currentUser = session.user;
+            showAppPages();
+            setSyncStatus('syncing');
+            await loadData();
+            return true;
+        }
+
+        // --- 初始化 ---
+        function handlePopState() {
+            const pageFromHash = normalizePage((location.hash || '').replace('#','') || 'home');
+            nav(pageFromHash, { fromHistory: true, replace: true });
+        }
+        window.addEventListener('popstate', handlePopState);
+
+        initAuth().then((loggedIn) => {
+            if (!loggedIn) return;
+            const initialPage = normalizePage((location.hash || '').replace('#','') || 'home');
+            nav(initialPage, { replace: true });
+            const tabBar = document.getElementById('tab-bar');
+            if (tabBar) tabBar.style.display = 'flex';
+            document.body.style.overflow = '';
+        });
+    </script>
+</body>
+</html>
