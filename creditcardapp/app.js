@@ -587,7 +587,7 @@ function populateRecCardFilter() {
                 const txCount = stats.txCount;
                 const daysLeft = Math.max(0, Math.ceil((nextBill - today) / 86400000));
                 html += `
-                <div class="dashboard-card rec-card" onclick="openRecsForCard(${JSON.stringify(c.name)})">
+                <div class="dashboard-card rec-card" data-card-name="${c.name}">
                     <div class="card-header">
                         <span class="card-name">${c.name}</span>
                         <span class="card-limit" style="color:var(--sub-text);">距账单日 ${daysLeft} 天</span>
@@ -609,6 +609,10 @@ function populateRecCardFilter() {
                 </div>`;
             });
             container.innerHTML = html;
+            container.querySelectorAll('.rec-card').forEach(cardEl => {
+                const name = cardEl.getAttribute('data-card-name');
+                cardEl.addEventListener('click', () => openRecsForCard(name));
+            });
         }
 
         function renderPresetList() {
