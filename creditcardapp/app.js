@@ -409,12 +409,12 @@ function populateRecCardFilter() {
                 cardSuggestions[c.name] = 0;
             }
             
-            renderDashboard();
+            refreshAllSummary();
             showToast('建议金额已刷新', 'success');
         }
 
         // --- 核心：渲染仪表盘 ---
-        function renderDashboard() {
+        function renderDashboard(statsOverride) {
             const cards = appState.cards || [];
             const recs = appState.records || [];
             const div = document.getElementById('card-dashboard');
@@ -424,75 +424,51 @@ function populateRecCardFilter() {
                 return;
             }
 
-            let html = '';
             const today = new Date();
-
-            // 计算总览数据
-            let totalLimit = 0;
-            let totalPeriodSpend = 0;
-            let totalNetChange = 0;
-            let totalRemaining = 0;
+            const stats = statsOverride || computeCardStats(cards, recs, today);
             let monthlyFee = 0;
-            (appState.records || []).forEach(r => {
+            (recs || []).forEach(r => {
                 const dt = r.ts ? new Date(r.ts) : (r.date ? new Date(r.date) : null);
                 if (!dt) return;
                 const isSameMonth = dt.getFullYear() === today.getFullYear() && dt.getMonth() === today.getMonth();
                 if (isSameMonth && normalizeRecType(r.type) === '消费') monthlyFee += Number(r.fee || 0);
             });
 
+            let html = '';
             cards.forEach((c, idx) => {
-                // 1. 统计本期已刷 (逻辑简化：找最近一个账单日之后的消费)
-                let billDay = c.billDay || 1;
-                
-                const stats = calcCardPeriodStats(c, recs, today);
-                const spent = stats.periodSpend;
-                const netChange = stats.netChange;
-                const outstanding = Math.max(0, netChange);
-                const txCount = stats.txCount;
+                const per = (stats.perCard || []).find(pc => pc.cardName === c.name) || { used:0, usedCount:0, remain:0, rate:0 };
+                const billDay = c.billDay || 1;
+                const daysLeft = Math.max(0, Math.ceil((getNextBillDate(billDay, today) - today) / 86400000));
+                const target = c.limit * 0.65;
+                const outstanding = per.used;
+                const baseSuggest = Math.max(0, (target - outstanding) / Math.max(1, daysLeft));
 
-                // 2. 计算建议（基础值，不使用随机因子）
-                let daysLeft = (today.getDate() < billDay ? billDay - today.getDate() : (30 - today.getDate() + billDay));
-                let target = c.limit * 0.65; // 目标 65%
-                let baseSuggest = Math.max(0, (target - outstanding) / daysLeft);
-                
-                // 如果卡片没有存储过建议值，则初始化为基础值（不应用随机因子）
                 if (!(c.name in cardSuggestions)) {
                     cardSuggestions[c.name] = baseSuggest;
                 }
-                
-                // 使用存储的建议值（可能包含随机因子，如果用户点击过刷新）
-                let suggest = cardSuggestions[c.name];
+                const suggest = cardSuggestions[c.name];
 
-                // 3. 计算进度条颜色
-                let percent = (outstanding / c.limit) * 100;
+                const percent = Math.min(100, (per.rate || 0) * 100);
                 let color = '#007AFF';
                 if(percent > 80) color = '#FF3B30'; // 红色警戒
                 else if(percent > 60) color = '#FF9500'; // 黄色注意
-                
-                // 4. 累计总览数据
-                totalLimit += c.limit;
-                totalPeriodSpend += spent;
-                totalNetChange += netChange;
-                totalRemaining += Math.max(0, c.limit - outstanding);
-
-                // 5. 显示卡片名称（含尾号）
                 const tailNumDisplay = c.tailNum ? ` (${c.tailNum})` : '';
-                
+
                 html += `
                 <div class="dashboard-card">
                     <div class="card-header">
                         <span class="card-name">${c.name}${tailNumDisplay}</span>
-                        <span class="card-limit">额度 ¥${c.limit/10000}万</span>
+                        <span class="card-limit">额度 ¥${(c.limit/10000).toFixed(1)}万</span>
                     </div>
                     
                     <div class="progress-bg">
-                        <div class="progress-bar" style="width:${Math.min(100, percent)}%; background:${color}"></div>
+                        <div class="progress-bar" style="width:${percent}%; background:${color}"></div>
                     </div>
                     
                     <div class="stat-grid">
                         <div class="stat-item">
                             <span class="stat-label">本期已刷</span>
-                            <span class="stat-val">¥${spent.toLocaleString()}</span>
+                            <span class="stat-val">¥${per.used.toLocaleString()}</span>
                         </div>
                         <div class="stat-item" style="text-align:right;">
                             <span class="stat-label">今日建议</span>
@@ -502,12 +478,12 @@ function populateRecCardFilter() {
                             </span>
                         </div>
                         <div class="stat-item" style="grid-column:1 / span 2;">
-                            <span class="stat-label">本期已刷</span>
-                            <span class="stat-val">已刷 ${txCount} 笔</span>
+                            <span class="stat-label">已刷笔数</span>
+                            <span class="stat-val">已刷 ${per.usedCount} 笔</span>
                         </div>
                         <div class="stat-item" style="grid-column:1 / span 2; color:var(--sub-text); font-size:13px;">
-                            <span class="stat-label">当前已用/欠款（手填）</span>
-                            <span class="stat-val">¥${(c.currentUsed || 0).toLocaleString()}</span>
+                            <span class="stat-label">当前已用/欠款</span>
+                            <span class="stat-val">¥${per.used.toLocaleString()}（剩余 ¥${per.remain.toLocaleString()}）</span>
                         </div>
                     </div>
 
@@ -546,19 +522,19 @@ function populateRecCardFilter() {
                     <div class="summary-grid">
                         <div class="summary-item">
                             <span class="summary-label">总额度</span>
-                            <span class="summary-val">¥${(totalLimit/10000).toFixed(1)}万</span>
+                            <span class="summary-val">¥${(stats.totalLimit/10000).toFixed(1)}万</span>
                         </div>
                         <div class="summary-item">
                             <span class="summary-label">本期已刷</span>
-                            <span class="summary-val">¥${totalPeriodSpend.toLocaleString()}</span>
+                            <span class="summary-val">¥${stats.totalUsed.toLocaleString()}</span>
                         </div>
                         <div class="summary-item">
                             <span class="summary-label">剩余额度</span>
-                            <span class="summary-val">¥${totalRemaining.toLocaleString()}</span>
+                            <span class="summary-val">¥${stats.totalRemain.toLocaleString()}</span>
                         </div>
                         <div class="summary-item">
                             <span class="summary-label">使用率</span>
-                            <span class="summary-val">${totalLimit > 0 ? ((Math.max(0, totalNetChange)/totalLimit)*100).toFixed(1) : 0}%</span>
+                            <span class="summary-val">${(stats.usageRate*100).toFixed(1)}%</span>
                         </div>
                         <div class="summary-item" style="grid-column:1 / span 2;">
                             <span class="summary-label">本月预估手续费</span>
@@ -587,9 +563,9 @@ function populateRecCardFilter() {
                 });
             });
         }
-
+        
         // --- 记账与流水 ---
-        function renderRecCardsList() {
+        function renderRecCardsList(statsOverride) {
             const container = document.getElementById('rec-card-list');
             if (!container) return;
             const cards = appState.cards || [];
@@ -598,15 +574,22 @@ function populateRecCardFilter() {
                 container.innerHTML = '<p style="text-align:center;color:#999;">请先添加卡片</p>';
                 return;
             }
-            const today = new Date();
+            const stats = statsOverride || computeCardStats(cards, recs, new Date());
             let html = '';
             cards.forEach(c => {
-                const nextBill = getNextBillDate(c.billDay, today);
-                const stats = calcCardPeriodStats(c, recs, today);
-                const spent = stats.periodSpend;
-                const feeSum = stats.feeSum;
-                const txCount = stats.txCount;
-                const daysLeft = Math.max(0, Math.ceil((nextBill - today) / 86400000));
+                const per = (stats.perCard || []).find(pc => pc.cardName === c.name) || { used:0, usedCount:0, rate:0 };
+                const spent = per.used;
+                const lastBill = getLastBillDate(c.billDay, new Date());
+                const feeSum = (recs || []).reduce((s,r)=> {
+                    if (r.cardName !== c.name) return s;
+                    if (normalizeRecType(r.type) !== '消费') return s;
+                    const rd = r.ts ? new Date(r.ts) : (r.date ? new Date(r.date) : null);
+                    if (!rd || rd < lastBill) return s;
+                    return s + Number(r.fee || 0);
+                },0);
+                const txCount = per.usedCount;
+                const nextBill = getNextBillDate(c.billDay, new Date());
+                const daysLeft = Math.max(0, Math.ceil((nextBill - new Date()) / 86400000));
                 html += `
                 <div class="dashboard-card rec-card" data-card-name="${c.name}">
                     <div class="card-header">
@@ -697,8 +680,8 @@ function populateRecCardFilter() {
             sel.innerHTML = opts.join('');
             sel.value = '';
             if (setAmountFromSelection) {
-                sel.addEventListener('change', () => {
-                    const amountInput = document.getElementById('r-amt');
+                const amountInput = document.getElementById('r-amt');
+                const handler = () => {
                     const selectedId = sel.value;
                     if (!selectedId) {
                         if (amountInput) amountInput.value = '';
@@ -708,7 +691,10 @@ function populateRecCardFilter() {
                     if (target && amountInput) {
                         amountInput.value = target.amount;
                     }
-                }, { once: true });
+                };
+                sel.removeEventListener('change', sel._refundHandler || (()=>{}));
+                sel.addEventListener('change', handler);
+                sel._refundHandler = handler;
             }
         }
 
@@ -725,6 +711,11 @@ function populateRecCardFilter() {
             }
         }
 
+        function showEl(el, show) {
+            if (!el) return;
+            el.style.display = show ? '' : 'none';
+        }
+
         function updateRecFormByType() {
             const typeInput = document.querySelector('input[name="r-type"]:checked');
             const recType = typeInput ? typeInput.value : '消费';
@@ -736,19 +727,27 @@ function populateRecCardFilter() {
             const channelSelect = document.getElementById('r-channel');
             const refundSection = document.getElementById('refund-section');
             const refundSelect = document.getElementById('r-refund-src');
+            const amountInput = document.getElementById('r-amt');
             const isRefund = recType === '退款';
-            const showFee = recType !== '还款';
+            const isRepay = recType === '还款';
+            const showFee = recType === '消费';
 
             // 显示/隐藏区块
-            if (feeSection) feeSection.style.display = showFee ? 'block' : 'none';
-            if (refundSection) refundSection.style.display = isRefund ? 'block' : 'none';
+            if (feeSection) feeSection.style.display = (showFee || isRefund) ? 'block' : 'none';
+            const showRefund = isRefund;
+            const showConsumeFields = showFee;
+            showEl(document.querySelector('label[for="r-channel"]')?.parentElement ?? channelSelect?.previousElementSibling, showConsumeFields);
+            showEl(channelSelect, showConsumeFields);
+            showEl(document.querySelector('label[for="r-preset"]')?.parentElement ?? presetSelect?.previousElementSibling, showConsumeFields);
+            showEl(presetSelect, showConsumeFields);
+            showEl(document.getElementById('fee-group'), showConsumeFields);
+            showEl(document.getElementById('merchant-group'), showConsumeFields);
+            showEl(refundSection, showRefund);
 
             // 控件禁用状态
-            if (presetSelect) presetSelect.disabled = !showFee || isRefund;
-            if (channelSelect) channelSelect.disabled = !showFee || isRefund;
-            if (refundSelect) refundSelect.disabled = !isRefund;
-
-            const amountInput = document.getElementById('r-amt');
+            if (presetSelect) presetSelect.disabled = !showConsumeFields;
+            if (channelSelect) channelSelect.disabled = !showConsumeFields;
+            if (refundSelect) refundSelect.disabled = !showRefund;
 
             if (isRefund) {
                 if (rateInput) rateInput.value = '0';
@@ -759,13 +758,17 @@ function populateRecCardFilter() {
                     amountInput.value = '';
                     amountInput.readOnly = true;
                 }
-            } else if (!showFee) {
+            } else if (isRepay) {
                 if (rateInput) rateInput.value = '0';
                 if (feeInput) feeInput.value = '0.00';
                 if (merchInput) merchInput.value = '';
+                if (refundSelect) refundSelect.value = '';
                 if (amountInput) amountInput.readOnly = false;
             } else {
-                if (amountInput) amountInput.readOnly = false;
+                if (refundSelect) refundSelect.value = '';
+                if (amountInput) {
+                    amountInput.readOnly = false;
+                }
                 calc();
             }
         }
@@ -885,8 +888,9 @@ function populateRecCardFilter() {
         }
 
         function refreshAllSummary() {
-            renderDashboard();
-            renderRecCardsList();
+            const stats = computeCardStats(appState.cards || [], appState.records || [], new Date());
+            renderDashboard(stats);
+            renderRecCardsList(stats);
             if (recordsMode === 'detail') {
                 renderRecordsPage();
             }
@@ -939,7 +943,7 @@ function populateRecCardFilter() {
         }
         async function doAddRec() {
             const idx=id('r-card').value, amt=parseFloat(id('r-amt').value), date=id('r-date').value;
-            if(!amt || !date) return showToast('请填写完整信息', 'error');
+            if(!date) return showToast('请填写完整信息', 'error');
 
             const dateResult = normalizeDateInput(date);
             if (dateResult.error) return showToast(dateResult.error, 'error');
@@ -958,28 +962,42 @@ function populateRecCardFilter() {
                 let fee = 0;
                 let merchantVal = id('r-merch').value;
                 let channel = normalizeChannel((document.getElementById('r-channel') || {}).value);
+                const refundSource = (document.getElementById('r-refund-src') || {}).value || '';
+                let amountVal = amt;
                 if (recType === '消费') {
+                    if (!amt) return showToast('请填写金额', 'error');
                     fee = amt * rate / 100;
+                    amountVal = amt;
                 } else if (recType === '退款') {
+                    if (!refundSource) return showToast('请选择要退款的消费记录', 'warn');
+                    const target = (appState.records || []).find(r => r.id === refundSource);
+                    if (!target) return showToast('关联消费不存在', 'error');
+                    amountVal = Number(target.amount) || 0;
+                    const amtInput = document.getElementById('r-amt');
+                    if (amtInput) amtInput.value = amountVal;
                     fee = 0;
                     rate = 0;
+                    channel = normalizeChannel(target.channel);
+                    merchantVal = target.merchant || '退款';
                 } else {
+                    if (!amt) return showToast('请填写金额', 'error');
                     fee = 0;
                     rate = 0;
                     merchantVal = '';
                     channel = '刷卡';
+                    amountVal = amt;
                 }
                 recs.unshift({
                     id: genId(),
                     cardName: cards[idx].name,
-                    amount: amt,
+                    amount: amountVal,
                     fee,
                     rate,
                     type: recType,
                     date: normalizedDate,
                     channel,
                     merchant: recType === '还款' ? '' : (merchantVal || (recType === '退款' ? '退款' : '消费')),
-                    refundForId: recType === '退款' ? ((document.getElementById('r-refund-src') || {}).value || '') : '',
+                    refundForId: recType === '退款' ? refundSource : '',
                     ts: new Date(`${normalizedDate}T00:00:00`).getTime()
                 });
                 recs.sort((a,b)=>b.ts-a.ts);
@@ -1112,7 +1130,7 @@ function populateRecCardFilter() {
                 const fab = document.getElementById('fab-add-record');
                 if (fab) fab.style.display = 'none';
             }
-            if(p==='home') renderDashboard();
+            if(p==='home') refreshAllSummary();
             if(p==='records') {
                 recordsMode = recordsMode || 'summary';
                 if (!activeRecordCardName) recordsMode = 'summary';
@@ -1199,7 +1217,10 @@ function populateRecCardFilter() {
             const rateInput = document.getElementById('r-rate');
             if (rateInput) rateInput.addEventListener('input', calc);
             const cardSelect = document.getElementById('r-card');
-            if (cardSelect) cardSelect.addEventListener('change', populateRefundSources);
+            if (cardSelect) cardSelect.addEventListener('change', () => {
+                const recType = document.querySelector('input[name=\"r-type\"]:checked')?.value;
+                populateRefundSources(recType === '退款');
+            });
             document.querySelectorAll('input[name="r-type"]').forEach(r => {
                 r.addEventListener('change', updateRecFormByType);
             });
@@ -1246,8 +1267,7 @@ function populateRecCardFilter() {
                 recFilterCard = 'ALL';
                 closeRecModal();
                 await saveData();
-                renderDashboard();
-                renderRecCardsList();
+                refreshAllSummary();
                 populateRecCardFilter();
                 if (showChart) renderSpendChart();
             } 

@@ -133,6 +133,6 @@ export function computeCardStats(cards = [], records = [], today = new Date()) {
     const totalLimit = perCard.reduce((s,c)=>s+c.limit,0);
     const totalUsed = perCard.reduce((s,c)=>s+c.used,0);
     const totalRemain = Math.max(0, totalLimit - totalUsed);
-    const usageRate = totalLimit > 0 ? totalUsed / totalLimit : 0;
+    const usageRate = totalLimit > 0 ? Math.min(1, totalUsed / totalLimit) : 0;
     return { totalLimit, totalUsed, totalRemain, usageRate, perCard };
 }
