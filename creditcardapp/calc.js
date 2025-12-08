@@ -29,6 +29,37 @@ const amountOf = (r) => {
     return Number.isFinite(n) ? n : 0;
 };
 
+// 旧数据归一化：将早期版本的记录结构映射到当前统一格式
+// 观察到的差异（示例）：旧记录可能只有 type: "消费"/"还款" 或英文 "expense"/"repay"，没有 amountNum/channel/refundForId 字段
+// 新记录：携带 amountNum、channel、refundForId，type 已标准化为中文
+export function normalizeRecord(raw = {}) {
+    const r = { ...raw };
+    // 类型统一为中文口径，无法判断时按消费处理
+    const t = r.type || r.kind || r.category;
+    if (t === true || t === 'repay' || t === 'repayment' || t === '还款' || r.isRepay) {
+        r.type = '还款';
+    } else if (t === 'refund' || t === '退款') {
+        r.type = '退款';
+    } else {
+        r.type = '消费';
+    }
+    // 数值字段统一为 Number
+    const amt = amountOf(r);
+    r.amount = amt;
+    r.amountNum = amt;
+    const fee = Number(r.fee ?? 0);
+    r.fee = Number.isFinite(fee) ? fee : 0;
+    // 补齐字段
+    r.channel = r.channel || '刷卡';
+    r.refundForId = r.refundForId || '';
+    if (!r.cardName && r.card) r.cardName = r.card;
+    return r;
+}
+
+export function normalizeAllRecords(records = []) {
+    return (records || []).map(normalizeRecord);
+}
+
 export function calcCardPeriodStats(card, recs, today = new Date()) {
     const lastBill = getLastBillDate(card.billDay, today);
     let periodSpend = 0; // 消费-退款

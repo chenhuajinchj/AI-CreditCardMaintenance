@@ -1,4 +1,4 @@
-import { getNextBillDate, getLastBillDate, calcCardPeriodStats, calcBestCardSuggestion, buildMonthlySeries, computeCardStats, computeStats } from "./calc.js";
+import { getNextBillDate, getLastBillDate, calcCardPeriodStats, calcBestCardSuggestion, buildMonthlySeries, computeCardStats, computeStats, normalizeAllRecords } from "./calc.js";
 import { showToast, setButtonLoading } from "./ui.js";
 // --- State & Constants ---
         const supabaseUrl = 'https://kcjlvxbffaxwpcrrxkbq.supabase.co';
@@ -193,7 +193,7 @@ import { showToast, setButtonLoading } from "./ui.js";
                 const content = (data && data.content) || {};
                 appState = {
                     cards: content.cards || [],
-                    records: content.records || [],
+                    records: normalizeAllRecords(content.records || []),
                     dark: content.dark || false,
                     feePresets: content.feePresets || []
                 };
@@ -205,6 +205,8 @@ import { showToast, setButtonLoading } from "./ui.js";
                 ensureRecordIds();
                 ensureCardDefaults();
                 normalizeRecordsInState({ stopOnError: false });
+                // 同步回写一次归一化后的数据，迁移旧结构
+                localStorage.setItem('creditcardapp_backup', JSON.stringify(appState));
                 if (recordsMode !== 'detail') recordsMode = 'summary';
                 renderPresetList();
                 refreshAllSummary();
@@ -221,6 +223,7 @@ import { showToast, setButtonLoading } from "./ui.js";
                     try {
                         appState = JSON.parse(backup);
                         if (!appState.feePresets) appState.feePresets = [];
+                        appState.records = normalizeAllRecords(appState.records || []);
                         if (appState.dark) {
                             document.body.classList.add('dark');
                             const darkSwitch = document.getElementById('dark-switch');
@@ -262,6 +265,7 @@ import { showToast, setButtonLoading } from "./ui.js";
                 return;
             }
             try {
+                appState.records = normalizeAllRecords(appState.records || []);
                 normalizeRecordsInState({ stopOnError: true });
             } catch (e) {
                 setSyncStatus('error');
@@ -1181,6 +1185,7 @@ function populateRecCardFilter() {
             on('btn-add-preset', 'click', addFeePreset);
             on('btn-add-card', 'click', doAddCard);
             on('btn-add-rec', 'click', doAddRec);
+            on('home-add-card-btn', 'click', showAddCard);
             on('dark-switch', 'change', toggleDark);
             document.querySelectorAll('.nav-btn[data-nav]').forEach(el => {
                 el.addEventListener('click', () => nav(el.dataset.nav));
