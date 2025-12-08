@@ -28,8 +28,8 @@
             <label>密码</label>
             <input type="password" id="login-password" placeholder="至少 6 位">
             <div class="auth-actions">
-                <button id="btn-login" class="btn btn-outline" style="width:50%;" onclick="handleLogin()">登录</button>
-                <button id="btn-register" class="btn" style="width:50%;" onclick="handleRegister()">注册</button>
+                <button id="btn-login" class="btn btn-outline" style="width:50%;">登录</button>
+                <button id="btn-register" class="btn" style="width:50%;">注册</button>
             </div>
         </div>
     </div>
@@ -38,7 +38,7 @@
     <div id="page-home" class="page container">
         <h2 style="margin-bottom:20px;">资产概览</h2>
         <div style="display:flex;justify-content:flex-end;margin:8px 0;">
-            <button class="btn" id="toggleChartBtn" onclick="toggleChart()">查看趋势</button>
+            <button class="btn" id="toggleChartBtn">查看趋势</button>
         </div>
         <div id="chartCard" style="display:none;">
             <div class="dashboard-card chart-card">
@@ -60,12 +60,12 @@
                         <div style="font-weight:700;" id="record-detail-title"></div>
                         <div style="font-size:12px; color:var(--sub-text);">账期内流水（倒序）</div>
                     </div>
-                    <button class="btn btn-outline" style="width:auto; padding:8px 12px;" onclick="backToRecordSummary()">返回</button>
+                    <button class="btn btn-outline" id="btn-record-back" style="width:auto; padding:8px 12px;">返回</button>
                 </div>
             </div>
             <div id="record-detail-list"></div>
         </div>
-        <div class="fab" onclick="showAddRecord()">
+        <div class="fab" id="fab-add-record">
             <svg class="icon icon-24" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round">
                 <path d="M12 5v14M5 12h14" />
             </svg>
@@ -80,15 +80,15 @@
                 <input type="checkbox" id="dark-switch" onchange="toggleDark()" style="width:auto; transform:scale(1.5);">
             </div>
             <hr style="border:0; border-top:1px solid #eee; margin:15px 0; opacity:0.1;">
-            <button onclick="exportData()" class="btn btn-outline">备份数据</button>
-            <button onclick="clearData()" class="btn btn-danger">清空重置</button>
-            <button onclick="handleLogout()" class="btn btn-outline" style="margin-top:12px;">退出登录</button>
+            <button id="btn-export" class="btn btn-outline">备份数据</button>
+            <button id="btn-clear" class="btn btn-danger">清空重置</button>
+            <button id="btn-logout" class="btn btn-outline" style="margin-top:12px;">退出登录</button>
             <div style="margin-top:18px;">
                 <div style="font-weight:600; margin-bottom:8px;">费率预设</div>
                 <input type="text" id="preset-name" placeholder="预设名称（如 某平台）">
                 <input type="text" id="preset-merchant" placeholder="商户名称">
                 <input type="number" id="preset-rate" placeholder="费率%" step="0.01">
-                <button class="btn btn-outline" onclick="addFeePreset()">新增预设</button>
+                <button class="btn btn-outline" id="btn-add-preset">新增预设</button>
                 <div id="preset-list" style="margin-top:10px;"></div>
             </div>
             <div class="sync-status-mini" id="sync-status-mini">
@@ -106,8 +106,8 @@
             <label>账单日</label><input type="number" id="c-bill" placeholder="每月几号出账">
             <label>当前已用额度/欠款</label><input type="number" id="c-current-used" placeholder="0">
             <label>卡号后4位（选填）</label><input type="text" id="c-tail" placeholder="8888" maxlength="4" pattern="[0-9]*">
-            <button id="btn-add-card" onclick="doAddCard()" class="btn">保存</button>
-            <button onclick="nav('home')" class="btn btn-outline">返回</button>
+            <button id="btn-add-card" class="btn">保存</button>
+            <button class="btn btn-outline nav-btn" data-nav="home">返回</button>
         </div>
     </div>
 
@@ -116,7 +116,7 @@
         <div class="dashboard-card">
             <label>选择卡片</label><select id="r-card"></select>
             <label>日期</label><input type="date" id="r-date">
-            <label>金额</label><input type="number" id="r-amt" oninput="calc()">
+            <label>金额</label><input type="number" id="r-amt">
             <label>类型</label>
             <div class="type-group">
                 <label class="type-option">
@@ -131,30 +131,30 @@
             </div>
             <div id="fee-section">
                 <label>费率预设</label>
-                <select id="r-preset" onchange="applyFeePreset(this.value)"></select>
+                <select id="r-preset"></select>
                 <div id="fee-group" style="display:flex; gap:10px;">
-                    <div style="flex:1"><label>费率%</label><input type="number" id="r-rate" value="0.60" oninput="calc()"></div>
+                    <div style="flex:1"><label>费率%</label><input type="number" id="r-rate" value="0.60"></div>
                     <div style="flex:1"><label>手续费</label><input type="text" id="r-fee" disabled style="color:red"></div>
                 </div>
                 <div id="merchant-group"><label>商户</label><input type="text" id="r-merch"></div>
             </div>
-            <button id="btn-add-rec" onclick="doAddRec()" class="btn">确认</button>
-            <button onclick="nav('records')" class="btn btn-outline">返回</button>
+            <button id="btn-add-rec" class="btn">确认</button>
+            <button class="btn btn-outline nav-btn" data-nav="records">返回</button>
         </div>
     </div>
 
     <div id="rec-modal" class="rec-modal hidden">
-        <div class="rec-modal-backdrop" onclick="closeRecModal()"></div>
+        <div class="rec-modal-backdrop"></div>
         <div class="rec-modal-panel">
             <div class="rec-modal-header">
                 <div>
                     <div class="rec-modal-title" id="rec-modal-title">流水</div>
                     <div style="font-size:12px; color:var(--sub-text);">本期流水明细</div>
                 </div>
-                <button class="rec-modal-close" onclick="closeRecModal()">✕</button>
+                <button class="rec-modal-close">✕</button>
             </div>
             <div class="rec-modal-filters">
-                <select id="rec-type-filter" onchange="onRecTypeFilterChange(this.value)">
+                <select id="rec-type-filter">
                     <option value="ALL">全部</option>
                     <option value="expense">消费</option>
                     <option value="repayment">还款</option>
@@ -166,7 +166,7 @@
     </div>
 
     <div class="tab-bar" id="tab-bar" style="display:none;">
-        <div class="tab-item" data-page="home" onclick="nav('home')">
+        <div class="tab-item" data-page="home">
             <svg class="tab-icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round">
                 <path d="M4 20h16" />
                 <rect x="6" y="10" width="3.2" height="9.5" rx="1" />
@@ -175,7 +175,7 @@
             </svg>
             概览
         </div>
-        <div class="tab-item" data-page="add-card" onclick="showAddCard()">
+        <div class="tab-item" data-page="add-card">
             <svg class="tab-icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round">
                 <rect x="3.5" y="6" width="17" height="12" rx="2.5" />
                 <path d="M6 11h12" />
@@ -183,7 +183,7 @@
             </svg>
             办卡
         </div>
-        <div class="tab-item" data-page="records" onclick="nav('records')">
+        <div class="tab-item" data-page="records">
             <svg class="tab-icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round">
                 <path d="M7 4.5h8.5L19.5 8V19a1.5 1.5 0 0 1-1.5 1.5H7A1.5 1.5 0 0 1 5.5 19V6a1.5 1.5 0 0 1 1.5-1.5Z"/>
                 <path d="M15.5 4.5V8H19" />
@@ -192,7 +192,7 @@
             </svg>
             流水
         </div>
-        <div class="tab-item" data-page="settings" onclick="nav('settings')">
+        <div class="tab-item" data-page="settings">
             <svg class="tab-icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round">
                 <path d="M12 15.5a3.5 3.5 0 1 0 0-7 3.5 3.5 0 0 0 0 7Z" />
                 <path d="M19.4 13.5a7.6 7.6 0 0 0 0-3l2-1.6-2-3.5-2.5 1a7.6 7.6 0 0 0-2.6-1.5L14 1.5h-4l-.3 3.4a7.6 7.6 0 0 0-2.6 1.5l-2.5-1-2 3.5 2 1.6a7.6 7.6 0 0 0 0 3L.6 15.1l2 3.5 2.5-1a7.6 7.6 0 0 0 2.6 1.5l.3 3.4h4l.3-3.4a7.6 7.6 0 0 0 2.6-1.5l2.5 1 2-3.5Z" />

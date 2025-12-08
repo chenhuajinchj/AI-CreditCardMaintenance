@@ -990,6 +990,51 @@ function populateRecCardFilter() {
             recordsMode = 'detail';
             nav('records');
         }
+
+        function bindDomEvents() {
+            const on = (id, ev, handler) => {
+                const el = document.getElementById(id);
+                if (el) el.addEventListener(ev, handler);
+            };
+            on('btn-login', 'click', handleLogin);
+            on('btn-register', 'click', handleRegister);
+            on('toggleChartBtn', 'click', toggleChart);
+            on('btn-record-back', 'click', backToRecordSummary);
+            on('fab-add-record', 'click', showAddRecord);
+            on('btn-export', 'click', exportData);
+            on('btn-clear', 'click', clearData);
+            on('btn-logout', 'click', handleLogout);
+            on('btn-add-preset', 'click', addFeePreset);
+            on('btn-add-card', 'click', doAddCard);
+            on('btn-add-rec', 'click', doAddRec);
+            document.querySelectorAll('.nav-btn[data-nav]').forEach(el => {
+                el.addEventListener('click', () => nav(el.dataset.nav));
+            });
+            document.querySelectorAll('.tab-item[data-page]').forEach(el => {
+                el.addEventListener('click', () => {
+                    const page = el.dataset.page;
+                    if (page === 'add-card') showAddCard(); else nav(page);
+                });
+            });
+            document.querySelectorAll('.rec-modal-backdrop, .rec-modal-close').forEach(el => {
+                el.addEventListener('click', closeRecModal);
+            });
+            const recTypeFilter = document.getElementById('rec-type-filter');
+            if (recTypeFilter) {
+                recTypeFilter.addEventListener('change', e => onRecTypeFilterChange(e.target.value));
+            }
+            const presetSelect = document.getElementById('r-preset');
+            if (presetSelect) {
+                presetSelect.addEventListener('change', e => applyFeePreset(e.target.value));
+            }
+            const amtInput = document.getElementById('r-amt');
+            if (amtInput) amtInput.addEventListener('input', calc);
+            const rateInput = document.getElementById('r-rate');
+            if (rateInput) rateInput.addEventListener('input', calc);
+            document.querySelectorAll('input[name="r-type"]').forEach(r => {
+                r.addEventListener('change', updateRecFormByType);
+            });
+        }
         async function toggleDark() { 
             const enabled = document.body.classList.toggle('dark'); 
             const darkSwitch = document.getElementById('dark-switch');
@@ -1179,6 +1224,7 @@ function populateRecCardFilter() {
             nav(pageFromHash, { fromHistory: true, replace: true });
         }
         window.addEventListener('popstate', handlePopState);
+        bindDomEvents();
 
         initAuth().then((loggedIn) => {
             if (!loggedIn) return;
