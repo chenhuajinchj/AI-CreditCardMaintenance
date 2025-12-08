@@ -1,4 +1,4 @@
-import { getNextBillDate, getLastBillDate, calcCardPeriodStats, calcBestCardSuggestion, buildMonthlySeries } from "./calc.js";
+import { getNextBillDate, getLastBillDate, calcCardPeriodStats, calcBestCardSuggestion, buildMonthlySeries, computeCardStats } from "./calc.js";
 import { showToast, setButtonLoading } from "./ui.js";
 // --- State & Constants ---
         const supabaseUrl = 'https://kcjlvxbffaxwpcrrxkbq.supabase.co';
@@ -683,18 +683,33 @@ function populateRecCardFilter() {
             sel.value = '';
         }
 
-        function populateRefundSources() {
+        function populateRefundSources(setAmountFromSelection = false) {
             const sel = document.getElementById('r-refund-src');
             if (!sel) return;
             const cardIdx = Number((document.getElementById('r-card') || {}).value || 0);
             const cardName = (appState.cards || [])[cardIdx]?.name;
-            const records = (appState.records || []).filter(r => r.cardName === cardName && normalizeRecType(r.type) === '消费');
+            const refundedIds = new Set((appState.records || []).filter(r => normalizeRecType(r.type) === '退款' && r.refundForId).map(r => r.refundForId));
+            const records = (appState.records || []).filter(r => r.cardName === cardName && normalizeRecType(r.type) === '消费' && !refundedIds.has(r.id));
             const opts = ['<option value="">不关联</option>'].concat(records.map(r => {
                 const channel = normalizeChannel(r.channel);
                 return `<option value="${r.id}">${r.date} · ${channel} · ${r.merchant || ''} · ¥${r.amount}</option>`;
             }));
             sel.innerHTML = opts.join('');
             sel.value = '';
+            if (setAmountFromSelection) {
+                sel.addEventListener('change', () => {
+                    const amountInput = document.getElementById('r-amt');
+                    const selectedId = sel.value;
+                    if (!selectedId) {
+                        if (amountInput) amountInput.value = '';
+                        return;
+                    }
+                    const target = records.find(r => r.id === selectedId);
+                    if (target && amountInput) {
+                        amountInput.value = target.amount;
+                    }
+                }, { once: true });
+            }
         }
 
         function applyFeePreset(presetId) {
@@ -721,24 +736,37 @@ function populateRecCardFilter() {
             const channelSelect = document.getElementById('r-channel');
             const refundSection = document.getElementById('refund-section');
             const refundSelect = document.getElementById('r-refund-src');
+            const isRefund = recType === '退款';
             const showFee = recType !== '还款';
+
+            // 显示/隐藏区块
             if (feeSection) feeSection.style.display = showFee ? 'block' : 'none';
-            if (presetSelect) presetSelect.disabled = !showFee;
-            if (channelSelect) channelSelect.disabled = !showFee;
-            if (refundSection) refundSection.style.display = recType === '退款' ? 'block' : 'none';
-            if (refundSelect) refundSelect.disabled = recType !== '退款';
-            if (!showFee) {
+            if (refundSection) refundSection.style.display = isRefund ? 'block' : 'none';
+
+            // 控件禁用状态
+            if (presetSelect) presetSelect.disabled = !showFee || isRefund;
+            if (channelSelect) channelSelect.disabled = !showFee || isRefund;
+            if (refundSelect) refundSelect.disabled = !isRefund;
+
+            const amountInput = document.getElementById('r-amt');
+
+            if (isRefund) {
                 if (rateInput) rateInput.value = '0';
                 if (feeInput) feeInput.value = '0.00';
                 if (merchInput) merchInput.value = '';
-            } else {
-                if (recType === '退款') {
-                    if (rateInput) rateInput.value = '0';
-                    if (feeInput) feeInput.value = '0.00';
-                    if (refundSelect) populateRefundSources();
-                } else {
-                    calc();
+                populateRefundSources(true);
+                if (amountInput) {
+                    amountInput.value = '';
+                    amountInput.readOnly = true;
                 }
+            } else if (!showFee) {
+                if (rateInput) rateInput.value = '0';
+                if (feeInput) feeInput.value = '0.00';
+                if (merchInput) merchInput.value = '';
+                if (amountInput) amountInput.readOnly = false;
+            } else {
+                if (amountInput) amountInput.readOnly = false;
+                calc();
             }
         }
 
@@ -772,8 +800,8 @@ function populateRecCardFilter() {
                 const channel = normalizeChannel(r.channel);
                 const isRefundedSource = refundedSourceIds.has(r.id);
                 const classes = ['dashboard-card','rec-item'];
-                if (isRefund) classes.push('record--refund');
-                if (isRefundedSource) classes.push('record--refunded-source');
+                if (isRefund) classes.push('record--refund','record-refund-pair');
+                if (isRefundedSource) classes.push('record--refunded-source','record-refund-pair');
                 const refundTag = isRefund ? ' · 退款' : (isRefundedSource ? ' · 已退款' : '');
                 html += `
                 <div class="${classes.join(' ')}" data-rec-id="${r.id}" style="padding:15px; margin-bottom:10px;">

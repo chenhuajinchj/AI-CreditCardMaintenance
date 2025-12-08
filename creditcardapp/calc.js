@@ -96,3 +96,43 @@ export function buildMonthlySeries(records = [], today = new Date()) {
     }
     return { labels, data };
 }
+
+export function computeCardStats(cards = [], records = [], today = new Date()) {
+    const perCard = (cards || []).map(card => {
+        const limit = Number(card.limit) || 0;
+        let used = 0;
+        let usedCount = 0;
+        (records || []).forEach(r => {
+            if (r.cardName !== card.name) return;
+            const t = normalizeType(r.type);
+            const amt = Number(r.amount) || 0;
+            const rd = new Date(r.date);
+            if (Number.isNaN(rd.getTime())) return;
+            // 账单期判断：使用账单日
+            const lastBill = getLastBillDate(card.billDay, today);
+            if (rd < lastBill) return;
+            if (t === '消费') {
+                used += amt;
+                usedCount += 1;
+            } else if (t === '退款' || t === '还款') {
+                used -= amt;
+            }
+        });
+        used = Math.max(0, used);
+        const remain = Math.max(0, limit - used);
+        const rate = limit > 0 ? used / limit : 0;
+        return {
+            cardName: card.name,
+            limit,
+            used,
+            usedCount,
+            remain,
+            rate: Math.min(1, rate)
+        };
+    });
+    const totalLimit = perCard.reduce((s,c)=>s+c.limit,0);
+    const totalUsed = perCard.reduce((s,c)=>s+c.used,0);
+    const totalRemain = Math.max(0, totalLimit - totalUsed);
+    const usageRate = totalLimit > 0 ? totalUsed / totalLimit : 0;
+    return { totalLimit, totalUsed, totalRemain, usageRate, perCard };
+}

@@ -644,6 +644,9 @@
 .record--refund .amount-text {
     color: #FF8A00 !important;
 }
+.record-refund-pair {
+    border-left: 4px solid #fbbf24;
+}
 .fab-detail {
     position: fixed;
     right: 20px;
