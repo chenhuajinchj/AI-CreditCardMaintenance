@@ -206,7 +206,16 @@ import { showToast, setButtonLoading } from "./ui.js";
                 ensureCardDefaults();
                 normalizeRecordsInState({ stopOnError: false });
                 // 同步回写一次归一化后的数据，迁移旧结构
+                const before = JSON.stringify(content.records || []);
+                const after = JSON.stringify(appState.records || []);
                 localStorage.setItem('creditcardapp_backup', JSON.stringify(appState));
+                if (before !== after && !offlineMode) {
+                    try {
+                        await saveData();
+                    } catch (e) {
+                        console.warn('migration save failed', e);
+                    }
+                }
                 if (recordsMode !== 'detail') recordsMode = 'summary';
                 renderPresetList();
                 refreshAllSummary();
@@ -1186,6 +1195,7 @@ function populateRecCardFilter() {
             on('btn-add-card', 'click', doAddCard);
             on('btn-add-rec', 'click', doAddRec);
             on('home-add-card-btn', 'click', showAddCard);
+            on('records-add-card-btn', 'click', showAddCard);
             on('dark-switch', 'change', toggleDark);
             document.querySelectorAll('.nav-btn[data-nav]').forEach(el => {
                 el.addEventListener('click', () => nav(el.dataset.nav));

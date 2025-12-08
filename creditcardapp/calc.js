@@ -36,15 +36,21 @@ export function normalizeRecord(raw = {}) {
     const r = { ...raw };
     // 类型统一为中文口径，无法判断时按消费处理
     const t = r.type || r.kind || r.category;
+    const flagRefund = r.isRefund === true || r.refund === true;
+    const amtVal = amountOf(r);
     if (t === true || t === 'repay' || t === 'repayment' || t === '还款' || r.isRepay) {
         r.type = '还款';
-    } else if (t === 'refund' || t === '退款') {
+    } else if (t === 'refund' || t === '退款' || flagRefund) {
         r.type = '退款';
     } else {
         r.type = '消费';
     }
     // 数值字段统一为 Number
-    const amt = amountOf(r);
+    let amt = amtVal;
+    // 兼容早期用负数表示退款/还款的场景：转为正数并依赖 type 方向
+    if (amt < 0 && (r.type === '退款' || r.type === '还款')) {
+        amt = Math.abs(amt);
+    }
     r.amount = amt;
     r.amountNum = amt;
     const fee = Number(r.fee ?? 0);
@@ -62,6 +68,7 @@ export function normalizeAllRecords(records = []) {
 
 export function calcCardPeriodStats(card, recs, today = new Date()) {
     const lastBill = getLastBillDate(card.billDay, today);
+    const nextBill = getNextBillDate(card.billDay, today);
     let periodSpend = 0; // 消费-退款
     let netChange = 0;   // 消费-退款-还款
     let feeSum = 0;      // 只对消费计手续费
@@ -71,7 +78,7 @@ export function calcCardPeriodStats(card, recs, today = new Date()) {
         if (!r.date) return;
         const rd = new Date(r.date);
         if (Number.isNaN(rd.getTime())) return;
-        if (rd < lastBill) return;
+        if (rd < lastBill || rd >= nextBill) return;
         const amt = amountOf(r);
         const fee = Number(r.fee) || 0;
         const t = normalizeType(r.type);
@@ -118,9 +125,14 @@ export function buildMonthlySeries(records = [], today = new Date()) {
         if (!r.date) return;
         const d = new Date(r.date);
         if (d.getFullYear() !== year || d.getMonth() !== month) return;
-        if (normalizeType(r.type) !== '消费') return;
+        const t = normalizeType(r.type);
         const day = d.getDate(); // 1..daysInMonth
-        daily[day - 1] += amountOf(r);
+        const amt = amountOf(r);
+        if (t === '消费') {
+            daily[day - 1] += amt;
+        } else if (t === '退款' || t === '还款') {
+            daily[day - 1] -= amt;
+        }
     });
 
     const labels = [];
@@ -139,6 +151,8 @@ export function computeCardStats(cards = [], records = [], today = new Date()) {
         const limit = Number(card.limit) || 0;
         let used = 0;
         let usedCount = 0;
+        const lastBill = getLastBillDate(card.billDay, today);
+        const nextBill = getNextBillDate(card.billDay, today);
         (records || []).forEach(r => {
             if (r.cardName !== card.name) return;
             const t = normalizeType(r.type);
@@ -146,8 +160,7 @@ export function computeCardStats(cards = [], records = [], today = new Date()) {
             const rd = new Date(r.date);
             if (Number.isNaN(rd.getTime())) return;
             // 账单期判断：使用账单日
-            const lastBill = getLastBillDate(card.billDay, today);
-            if (rd < lastBill) return;
+            if (rd < lastBill || rd >= nextBill) return;
             if (t === '消费') {
                 used += amt;
                 usedCount += 1;
@@ -155,16 +168,15 @@ export function computeCardStats(cards = [], records = [], today = new Date()) {
                 used -= amt;
             }
         });
-        used = Math.max(0, used);
-        const remain = Math.max(0, limit - used);
-        const rate = limit > 0 ? used / limit : 0;
+        const remain = limit - used;
+        const rate = limit > 0 ? Math.min(1, Math.max(0, used / limit)) : 0;
         return {
             cardName: card.name,
             limit,
             used,
             usedCount,
             remain,
-            rate: Math.min(1, rate)
+            rate
         };
     });
     const totalLimit = perCard.reduce((s,c)=>s+c.limit,0);
@@ -182,12 +194,13 @@ export function computeStats(cards = [], records = [], today = new Date()) {
         let usedCount = 0; // 只计消费笔数
         let feeEstimate = 0; // 账单期内手续费（消费）
         const lastBill = getLastBillDate(card.billDay, today);
+        const nextBill = getNextBillDate(card.billDay, today);
         (records || []).forEach(r => {
             if (r.cardName !== card.name) return;
             const t = normalizeType(r.type);
             const rd = new Date(r.date);
             if (Number.isNaN(rd.getTime())) return;
-            if (rd < lastBill) return;
+            if (rd < lastBill || rd >= nextBill) return;
             const amt = amountOf(r);
             if (t === '消费') {
                 usedAmount += amt;
@@ -197,9 +210,8 @@ export function computeStats(cards = [], records = [], today = new Date()) {
                 usedAmount -= amt;
             }
         });
-        usedAmount = Math.max(0, usedAmount);
-        const remaining = Math.max(0, limit - usedAmount);
-        const usageRate = limit > 0 ? Math.min(1, usedAmount / limit) : 0;
+        const remaining = limit - usedAmount;
+        const usageRate = limit > 0 ? Math.min(1, Math.max(0, usedAmount / limit)) : 0;
         return { cardName: card.name, limit, usedAmount, usedCount, remaining, feeEstimate, usageRate };
     });
 
