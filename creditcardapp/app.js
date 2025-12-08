@@ -56,12 +56,14 @@ import { showToast, setButtonLoading } from "./ui.js";
             let firstError = null;
             appState.records = (appState.records || []).map(r => {
                 if (!r.date) return r;
+                const amountNum = Number(r.amount ?? r.amountNum ?? 0);
                 const res = normalizeDateInput(r.date);
                 if (res.error) {
                     if (!firstError) firstError = { value: r.date, reason: res.error };
                     return r;
                 }
                 const next = { ...r, date: res.value };
+                next.amountNum = Number.isFinite(amountNum) ? amountNum : 0;
                 const normType = normalizeRecType(next.type);
                 next.type = normType;
                 next.channel = normalizeChannel(next.channel);
@@ -978,6 +980,7 @@ function populateRecCardFilter() {
                     id: genId(),
                     cardName: cards[idx].name,
                     amount: amountVal,
+                    amountNum: amountVal,
                     fee,
                     rate,
                     type: recType,

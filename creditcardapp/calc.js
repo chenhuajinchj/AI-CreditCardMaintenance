@@ -23,6 +23,12 @@ const normalizeType = (t) => {
     return '消费';
 };
 
+const amountOf = (r) => {
+    const raw = r?.amountNum ?? r?.amount ?? 0;
+    const n = Number(raw);
+    return Number.isFinite(n) ? n : 0;
+};
+
 export function calcCardPeriodStats(card, recs, today = new Date()) {
     const lastBill = getLastBillDate(card.billDay, today);
     let periodSpend = 0; // 消费-退款
@@ -35,7 +41,7 @@ export function calcCardPeriodStats(card, recs, today = new Date()) {
         const rd = new Date(r.date);
         if (Number.isNaN(rd.getTime())) return;
         if (rd < lastBill) return;
-        const amt = Number(r.amount) || 0;
+        const amt = amountOf(r);
         const fee = Number(r.fee) || 0;
         const t = normalizeType(r.type);
         if (t === '还款') {
@@ -83,7 +89,7 @@ export function buildMonthlySeries(records = [], today = new Date()) {
         if (d.getFullYear() !== year || d.getMonth() !== month) return;
         if (normalizeType(r.type) !== '消费') return;
         const day = d.getDate(); // 1..daysInMonth
-        daily[day - 1] += Number(r.amount) || 0;
+        daily[day - 1] += amountOf(r);
     });
 
     const labels = [];
@@ -105,7 +111,7 @@ export function computeCardStats(cards = [], records = [], today = new Date()) {
         (records || []).forEach(r => {
             if (r.cardName !== card.name) return;
             const t = normalizeType(r.type);
-            const amt = Number(r.amount) || 0;
+            const amt = amountOf(r);
             const rd = new Date(r.date);
             if (Number.isNaN(rd.getTime())) return;
             // 账单期判断：使用账单日
@@ -151,7 +157,7 @@ export function computeStats(cards = [], records = [], today = new Date()) {
             const rd = new Date(r.date);
             if (Number.isNaN(rd.getTime())) return;
             if (rd < lastBill) return;
-            const amt = Number(r.amount) || 0;
+            const amt = amountOf(r);
             if (t === '消费') {
                 usedAmount += amt;
                 usedCount += 1;
