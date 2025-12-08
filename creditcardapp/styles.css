@@ -637,6 +637,13 @@
     transform: scale(0.99);
     box-shadow: 0 12px 24px rgba(15,23,42,0.15);
 }
+.record--refund,
+.record--refunded-source {
+    background: #FFF7E0 !important;
+}
+.record--refund .amount-text {
+    color: #FF8A00 !important;
+}
 .fab-detail {
     position: fixed;
     right: 20px;

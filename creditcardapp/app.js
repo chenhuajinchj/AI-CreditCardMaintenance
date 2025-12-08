@@ -65,6 +65,7 @@ import { showToast, setButtonLoading } from "./ui.js";
                 const normType = normalizeRecType(next.type);
                 next.type = normType;
                 next.channel = normalizeChannel(next.channel);
+                if (!next.refundForId) next.refundForId = '';
                 if (!r.ts || Number.isNaN(r.ts)) {
                     next.ts = new Date(`${res.value}T00:00:00`).getTime();
                 }
@@ -182,11 +183,9 @@ import { showToast, setButtonLoading } from "./ui.js";
                     appState = empty;
                     populateRecCardFilter();
                     setSyncStatus('synced');
-                    renderDashboard();
                     recordsMode = 'summary';
-                    renderRecordsPage();
                     renderPresetList();
-                    if (showChart) renderSpendChart();
+                    refreshAllSummary();
                     return;
                 }
                 const content = (data && data.content) || {};
@@ -204,10 +203,9 @@ import { showToast, setButtonLoading } from "./ui.js";
                 ensureRecordIds();
                 ensureCardDefaults();
                 normalizeRecordsInState({ stopOnError: false });
-                renderDashboard();
                 if (recordsMode !== 'detail') recordsMode = 'summary';
-                renderRecordsPage();
                 renderPresetList();
+                refreshAllSummary();
                 populateRecCardFilter();
                 offlineMode = false;
                 setSyncStatus('synced');
@@ -229,26 +227,23 @@ import { showToast, setButtonLoading } from "./ui.js";
                         ensureRecordIds();
                         ensureCardDefaults();
                         normalizeRecordsInState({ stopOnError: false });
-                        renderDashboard();
                         if (recordsMode !== 'detail') recordsMode = 'summary';
-                        renderRecordsPage();
                         renderPresetList();
+                        refreshAllSummary();
                         populateRecCardFilter();
                     } catch (parseError) {
                         console.error('Failed to parse backup data', parseError);
                         appState = { cards: [], records: [], dark: false, feePresets: [] };
-                        renderDashboard();
                         recordsMode = 'summary';
-                        renderRecordsPage();
                         renderPresetList();
+                        refreshAllSummary();
                         populateRecCardFilter();
                     }
                 } else {
                     appState = { cards: [], records: [], dark: false, feePresets: [] };
-                    renderDashboard();
                     recordsMode = 'summary';
-                    renderRecordsPage();
                     renderPresetList();
+                    refreshAllSummary();
                     populateRecCardFilter();
                 }
                 setSyncStatus('error');
@@ -688,6 +683,20 @@ function populateRecCardFilter() {
             sel.value = '';
         }
 
+        function populateRefundSources() {
+            const sel = document.getElementById('r-refund-src');
+            if (!sel) return;
+            const cardIdx = Number((document.getElementById('r-card') || {}).value || 0);
+            const cardName = (appState.cards || [])[cardIdx]?.name;
+            const records = (appState.records || []).filter(r => r.cardName === cardName && normalizeRecType(r.type) === '消费');
+            const opts = ['<option value="">不关联</option>'].concat(records.map(r => {
+                const channel = normalizeChannel(r.channel);
+                return `<option value="${r.id}">${r.date} · ${channel} · ${r.merchant || ''} · ¥${r.amount}</option>`;
+            }));
+            sel.innerHTML = opts.join('');
+            sel.value = '';
+        }
+
         function applyFeePreset(presetId) {
             if (!presetId) return;
             const preset = (appState.feePresets || []).find(p => p.id === presetId);
@@ -710,10 +719,14 @@ function populateRecCardFilter() {
             const feeInput = document.getElementById('r-fee');
             const merchInput = document.getElementById('r-merch');
             const channelSelect = document.getElementById('r-channel');
+            const refundSection = document.getElementById('refund-section');
+            const refundSelect = document.getElementById('r-refund-src');
             const showFee = recType !== '还款';
             if (feeSection) feeSection.style.display = showFee ? 'block' : 'none';
             if (presetSelect) presetSelect.disabled = !showFee;
             if (channelSelect) channelSelect.disabled = !showFee;
+            if (refundSection) refundSection.style.display = recType === '退款' ? 'block' : 'none';
+            if (refundSelect) refundSelect.disabled = recType !== '退款';
             if (!showFee) {
                 if (rateInput) rateInput.value = '0';
                 if (feeInput) feeInput.value = '0.00';
@@ -722,6 +735,7 @@ function populateRecCardFilter() {
                 if (recType === '退款') {
                     if (rateInput) rateInput.value = '0';
                     if (feeInput) feeInput.value = '0.00';
+                    if (refundSelect) populateRefundSources();
                 } else {
                     calc();
                 }
@@ -742,6 +756,10 @@ function populateRecCardFilter() {
             }
             
             let html = '';
+            const refundedSourceIds = new Set();
+            recs.forEach(r => {
+                if (r.refundForId) refundedSourceIds.add(r.refundForId);
+            });
             recs.forEach((r) => {
                 const t = normalizeRecType(r.type);
                 const feeVal = Number(r.fee || 0);
@@ -752,11 +770,16 @@ function populateRecCardFilter() {
                 const feeText = t === '消费' ? `手续费 ¥${feeVal.toFixed(2)}` : '无手续费';
                 const feeColor = t === '消费' ? 'var(--danger)' : 'var(--sub-text)';
                 const channel = normalizeChannel(r.channel);
+                const isRefundedSource = refundedSourceIds.has(r.id);
+                const classes = ['dashboard-card','rec-item'];
+                if (isRefund) classes.push('record--refund');
+                if (isRefundedSource) classes.push('record--refunded-source');
+                const refundTag = isRefund ? ' · 退款' : (isRefundedSource ? ' · 已退款' : '');
                 html += `
-                <div class="dashboard-card rec-item" data-rec-id="${r.id}" style="padding:15px; margin-bottom:10px;">
+                <div class="${classes.join(' ')}" data-rec-id="${r.id}" style="padding:15px; margin-bottom:10px;">
                     <div style="display:flex; justify-content:space-between;">
-                        <span style="font-weight:600">${r.cardName} · ${t}</span>
-                        <span style="font-weight:bold; font-size:18px; color:${amountColor};">${amountSign}${r.amount}</span>
+                        <span style="font-weight:600">${r.cardName} · ${t}${refundTag}</span>
+                        <span class="amount-text" style="font-weight:bold; font-size:18px; color:${amountColor};">${amountSign}${r.amount}</span>
                     </div>
                     <div style="display:flex; justify-content:space-between; margin-top:5px; font-size:12px; color:#888;">
                         <span>${r.date} · ${channel} · ${r.merchant || ''}</span>
@@ -833,6 +856,15 @@ function populateRecCardFilter() {
             renderRecs({ records: recs, targetId: 'record-detail-list' });
         }
 
+        function refreshAllSummary() {
+            renderDashboard();
+            renderRecCardsList();
+            if (recordsMode === 'detail') {
+                renderRecordsPage();
+            }
+            if (showChart) renderSpendChart();
+        }
+
         function showRecordDetail(cardName) {
             activeRecordCardName = cardName;
             recordsMode = 'detail';
@@ -868,6 +900,7 @@ function populateRecCardFilter() {
                 appState.cards.push(newCard);
                 await saveData();
                 populateRecCardFilter();
+                refreshAllSummary();
                 showToast('卡片添加成功', 'success');
                 nav('home');
             } catch (e) {
@@ -918,13 +951,14 @@ function populateRecCardFilter() {
                     date: normalizedDate,
                     channel,
                     merchant: recType === '还款' ? '' : (merchantVal || (recType === '退款' ? '退款' : '消费')),
+                    refundForId: recType === '退款' ? ((document.getElementById('r-refund-src') || {}).value || '') : '',
                     ts: new Date(`${normalizedDate}T00:00:00`).getTime()
                 });
                 recs.sort((a,b)=>b.ts-a.ts);
                 await saveData();
+                refreshAllSummary();
                 showToast('记账成功', 'success');
                 nav('records');
-                if (showChart) renderSpendChart();
             } catch (e) {
                 showToast('保存失败：' + (e.message || '未知错误'), 'error');
             } finally {
@@ -951,9 +985,7 @@ function populateRecCardFilter() {
                 }
                 await saveData();
                 populateRecCardFilter();
-                renderDashboard();
-                renderRecCardsList();
-                if (showChart) renderSpendChart();
+                refreshAllSummary();
             }
         }
         async function delRec(recId) {
@@ -963,8 +995,8 @@ function populateRecCardFilter() {
                 appState.records.splice(idx,1);
                 await saveData();
                 renderRecModalList();
-                renderRecCardsList();
-                if (showChart) renderSpendChart();
+                refreshAllSummary();
+                showToast('已删除', 'success');
             }
         }
         function fillPresetForm(preset) {
@@ -1014,6 +1046,7 @@ function populateRecCardFilter() {
             await saveData();
             renderPresetList();
             populatePresetSelect();
+            refreshAllSummary();
             showToast(editingPresetId ? '预设已更新' : '预设已保存', 'success');
             resetPresetForm();
         }
@@ -1025,6 +1058,7 @@ function populateRecCardFilter() {
             await saveData();
             renderPresetList();
             populatePresetSelect();
+            refreshAllSummary();
             showToast('预设已删除', 'success');
         }
         function calc() {
@@ -1076,6 +1110,7 @@ function populateRecCardFilter() {
                 }
                 const channelSel = document.getElementById('r-channel');
                 if (channelSel) channelSel.value = '刷卡';
+                populateRefundSources();
                 updateRecFormByType();
             }
             const tab = document.querySelector(`.tab-item[data-page="${p}"]`);
@@ -1110,6 +1145,7 @@ function populateRecCardFilter() {
             on('btn-add-preset', 'click', addFeePreset);
             on('btn-add-card', 'click', doAddCard);
             on('btn-add-rec', 'click', doAddRec);
+            on('dark-switch', 'change', toggleDark);
             document.querySelectorAll('.nav-btn[data-nav]').forEach(el => {
                 el.addEventListener('click', () => nav(el.dataset.nav));
             });
@@ -1134,6 +1170,8 @@ function populateRecCardFilter() {
             if (amtInput) amtInput.addEventListener('input', calc);
             const rateInput = document.getElementById('r-rate');
             if (rateInput) rateInput.addEventListener('input', calc);
+            const cardSelect = document.getElementById('r-card');
+            if (cardSelect) cardSelect.addEventListener('change', populateRefundSources);
             document.querySelectorAll('input[name="r-type"]').forEach(r => {
                 r.addEventListener('change', updateRecFormByType);
             });

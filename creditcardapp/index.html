@@ -3,7 +3,7 @@
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no">
-    <title>信用卡智囊 (V5.1 仪表盘)</title>
+    <title>信用卡智囊 (V5.4 仪表盘)</title>
     <link rel="manifest" href="manifest.json">
 <link rel="apple-touch-icon" href="icon.png">
 <meta name="apple-mobile-web-app-capable" content="yes">
@@ -78,7 +78,7 @@
         <div class="dashboard-card">
             <div style="display:flex; justify-content:space-between; align-items:center;">
                 <span>深色模式</span>
-                <input type="checkbox" id="dark-switch" onchange="toggleDark()" style="width:auto; transform:scale(1.5);">
+                <input type="checkbox" id="dark-switch" style="width:auto; transform:scale(1.5);">
             </div>
             <hr style="border:0; border-top:1px solid #eee; margin:15px 0; opacity:0.1;">
             <button id="btn-export" class="btn btn-outline">备份数据</button>
@@ -146,6 +146,10 @@
                     <div style="flex:1"><label>手续费</label><input type="text" id="r-fee" disabled style="color:red"></div>
                 </div>
                 <div id="merchant-group"><label>商户</label><input type="text" id="r-merch"></div>
+                <div id="refund-section">
+                    <label>关联消费（退款时选）</label>
+                    <select id="r-refund-src"></select>
+                </div>
             </div>
             <button id="btn-add-rec" class="btn">确认</button>
             <button class="btn btn-outline nav-btn" data-nav="records">返回</button>
