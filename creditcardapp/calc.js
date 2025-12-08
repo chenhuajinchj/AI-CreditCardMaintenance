@@ -136,3 +136,44 @@ export function computeCardStats(cards = [], records = [], today = new Date()) {
     const usageRate = totalLimit > 0 ? Math.min(1, totalUsed / totalLimit) : 0;
     return { totalLimit, totalUsed, totalRemain, usageRate, perCard };
 }
+
+// 统一统计：概览 + 单卡
+export function computeStats(cards = [], records = [], today = new Date()) {
+    const perCard = (cards || []).map(card => {
+        const limit = Number(card.limit) || 0;
+        let usedAmount = 0;
+        let usedCount = 0; // 只计消费笔数
+        let feeEstimate = 0; // 账单期内手续费（消费）
+        const lastBill = getLastBillDate(card.billDay, today);
+        (records || []).forEach(r => {
+            if (r.cardName !== card.name) return;
+            const t = normalizeType(r.type);
+            const rd = new Date(r.date);
+            if (Number.isNaN(rd.getTime())) return;
+            if (rd < lastBill) return;
+            const amt = Number(r.amount) || 0;
+            if (t === '消费') {
+                usedAmount += amt;
+                usedCount += 1;
+                feeEstimate += Number(r.fee || 0);
+            } else if (t === '退款' || t === '还款') {
+                usedAmount -= amt;
+            }
+        });
+        usedAmount = Math.max(0, usedAmount);
+        const remaining = Math.max(0, limit - usedAmount);
+        const usageRate = limit > 0 ? Math.min(1, usedAmount / limit) : 0;
+        return { cardName: card.name, limit, usedAmount, usedCount, remaining, feeEstimate, usageRate };
+    });
+
+    const totalLimit = perCard.reduce((s,c)=>s + c.limit, 0);
+    const totalUsed = perCard.reduce((s,c)=>s + c.usedAmount, 0);
+    const totalFeeEstimate = perCard.reduce((s,c)=>s + c.feeEstimate, 0);
+    const totalRemaining = Math.max(0, totalLimit - totalUsed);
+    const usageRate = totalLimit > 0 ? Math.min(1, totalUsed / totalLimit) : 0;
+
+    return {
+        overview: { totalLimit, totalUsed, totalRemaining, totalFeeEstimate, usageRate },
+        perCard
+    };
+}

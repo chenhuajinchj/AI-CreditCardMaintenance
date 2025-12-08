@@ -1,4 +1,4 @@
-import { getNextBillDate, getLastBillDate, calcCardPeriodStats, calcBestCardSuggestion, buildMonthlySeries, computeCardStats } from "./calc.js";
+import { getNextBillDate, getLastBillDate, calcCardPeriodStats, calcBestCardSuggestion, buildMonthlySeries, computeCardStats, computeStats } from "./calc.js";
 import { showToast, setButtonLoading } from "./ui.js";
 // --- State & Constants ---
         const supabaseUrl = 'https://kcjlvxbffaxwpcrrxkbq.supabase.co';
@@ -425,22 +425,16 @@ function populateRecCardFilter() {
             }
 
             const today = new Date();
-            const stats = statsOverride || computeCardStats(cards, recs, today);
-            let monthlyFee = 0;
-            (recs || []).forEach(r => {
-                const dt = r.ts ? new Date(r.ts) : (r.date ? new Date(r.date) : null);
-                if (!dt) return;
-                const isSameMonth = dt.getFullYear() === today.getFullYear() && dt.getMonth() === today.getMonth();
-                if (isSameMonth && normalizeRecType(r.type) === '消费') monthlyFee += Number(r.fee || 0);
-            });
+            const stats = statsOverride || computeStats(cards, recs, today);
+            const monthlyFee = (stats.overview || {}).totalFeeEstimate || 0;
 
             let html = '';
             cards.forEach((c, idx) => {
-                const per = (stats.perCard || []).find(pc => pc.cardName === c.name) || { used:0, usedCount:0, remain:0, rate:0 };
+                const per = (stats.perCard || []).find(pc => pc.cardName === c.name) || { usedAmount:0, usedCount:0, remaining:0, usageRate:0 };
                 const billDay = c.billDay || 1;
                 const daysLeft = Math.max(0, Math.ceil((getNextBillDate(billDay, today) - today) / 86400000));
                 const target = c.limit * 0.65;
-                const outstanding = per.used;
+                const outstanding = per.usedAmount || 0;
                 const baseSuggest = Math.max(0, (target - outstanding) / Math.max(1, daysLeft));
 
                 if (!(c.name in cardSuggestions)) {
@@ -448,7 +442,7 @@ function populateRecCardFilter() {
                 }
                 const suggest = cardSuggestions[c.name];
 
-                const percent = Math.min(100, (per.rate || 0) * 100);
+                const percent = Math.min(100, (per.usageRate || 0) * 100);
                 let color = '#007AFF';
                 if(percent > 80) color = '#FF3B30'; // 红色警戒
                 else if(percent > 60) color = '#FF9500'; // 黄色注意
@@ -468,7 +462,7 @@ function populateRecCardFilter() {
                     <div class="stat-grid">
                         <div class="stat-item">
                             <span class="stat-label">本期已刷</span>
-                            <span class="stat-val">¥${per.used.toLocaleString()}</span>
+                            <span class="stat-val">¥${(per.usedAmount || 0).toLocaleString()}</span>
                         </div>
                         <div class="stat-item" style="text-align:right;">
                             <span class="stat-label">今日建议</span>
@@ -479,11 +473,11 @@ function populateRecCardFilter() {
                         </div>
                         <div class="stat-item" style="grid-column:1 / span 2;">
                             <span class="stat-label">已刷笔数</span>
-                            <span class="stat-val">已刷 ${per.usedCount} 笔</span>
+                            <span class="stat-val">已刷 ${per.usedCount || 0} 笔</span>
                         </div>
                         <div class="stat-item" style="grid-column:1 / span 2; color:var(--sub-text); font-size:13px;">
                             <span class="stat-label">当前已用/欠款</span>
-                            <span class="stat-val">¥${per.used.toLocaleString()}（剩余 ¥${per.remain.toLocaleString()}）</span>
+                            <span class="stat-val">¥${(per.usedAmount || 0).toLocaleString()}（剩余 ¥${(per.remaining || 0).toLocaleString()}）</span>
                         </div>
                     </div>
 
@@ -522,19 +516,19 @@ function populateRecCardFilter() {
                     <div class="summary-grid">
                         <div class="summary-item">
                             <span class="summary-label">总额度</span>
-                            <span class="summary-val">¥${(stats.totalLimit/10000).toFixed(1)}万</span>
+                            <span class="summary-val">¥${((stats.overview?.totalLimit || 0)/10000).toFixed(1)}万</span>
                         </div>
                         <div class="summary-item">
                             <span class="summary-label">本期已刷</span>
-                            <span class="summary-val">¥${stats.totalUsed.toLocaleString()}</span>
+                            <span class="summary-val">¥${(stats.overview?.totalUsed || 0).toLocaleString()}</span>
                         </div>
                         <div class="summary-item">
                             <span class="summary-label">剩余额度</span>
-                            <span class="summary-val">¥${stats.totalRemain.toLocaleString()}</span>
+                            <span class="summary-val">¥${(stats.overview?.totalRemaining || 0).toLocaleString()}</span>
                         </div>
                         <div class="summary-item">
                             <span class="summary-label">使用率</span>
-                            <span class="summary-val">${(stats.usageRate*100).toFixed(1)}%</span>
+                            <span class="summary-val">${((stats.overview?.usageRate || 0)*100).toFixed(1)}%</span>
                         </div>
                         <div class="summary-item" style="grid-column:1 / span 2;">
                             <span class="summary-label">本月预估手续费</span>
@@ -574,20 +568,13 @@ function populateRecCardFilter() {
                 container.innerHTML = '<p style="text-align:center;color:#999;">请先添加卡片</p>';
                 return;
             }
-            const stats = statsOverride || computeCardStats(cards, recs, new Date());
+            const stats = statsOverride || computeStats(cards, recs, new Date());
             let html = '';
             cards.forEach(c => {
-                const per = (stats.perCard || []).find(pc => pc.cardName === c.name) || { used:0, usedCount:0, rate:0 };
-                const spent = per.used;
-                const lastBill = getLastBillDate(c.billDay, new Date());
-                const feeSum = (recs || []).reduce((s,r)=> {
-                    if (r.cardName !== c.name) return s;
-                    if (normalizeRecType(r.type) !== '消费') return s;
-                    const rd = r.ts ? new Date(r.ts) : (r.date ? new Date(r.date) : null);
-                    if (!rd || rd < lastBill) return s;
-                    return s + Number(r.fee || 0);
-                },0);
-                const txCount = per.usedCount;
+                const per = (stats.perCard || []).find(pc => pc.cardName === c.name) || { usedAmount:0, usedCount:0, usageRate:0, feeEstimate:0 };
+                const spent = per.usedAmount || 0;
+                const feeSum = per.feeEstimate || 0;
+                const txCount = per.usedCount || 0;
                 const nextBill = getNextBillDate(c.billDay, new Date());
                 const daysLeft = Math.max(0, Math.ceil((nextBill - new Date()) / 86400000));
                 html += `
@@ -888,7 +875,7 @@ function populateRecCardFilter() {
         }
 
         function refreshAllSummary() {
-            const stats = computeCardStats(appState.cards || [], appState.records || [], new Date());
+            const stats = computeStats(appState.cards || [], appState.records || [], new Date());
             renderDashboard(stats);
             renderRecCardsList(stats);
             if (recordsMode === 'detail') {
