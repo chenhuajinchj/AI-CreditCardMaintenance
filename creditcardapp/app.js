@@ -16,6 +16,7 @@ import { showToast, setButtonLoading } from "./ui.js";
         let recTypeFilter = 'ALL';
         let recordsMode = 'summary'; // 'summary' | 'detail'
         let activeRecordCardName = null;
+        let editingPresetId = null;
         const GRACE_DAYS = 20;
         const id = x => document.getElementById(x);
         const genId = () => (crypto.randomUUID ? crypto.randomUUID() : `rec_${Date.now()}_${Math.random().toString(16).slice(2)}`);
@@ -61,6 +62,9 @@ import { showToast, setButtonLoading } from "./ui.js";
                     return r;
                 }
                 const next = { ...r, date: res.value };
+                const normType = normalizeRecType(next.type);
+                next.type = normType;
+                next.channel = normalizeChannel(next.channel);
                 if (!r.ts || Number.isNaN(r.ts)) {
                     next.ts = new Date(`${res.value}T00:00:00`).getTime();
                 }
@@ -74,6 +78,16 @@ import { showToast, setButtonLoading } from "./ui.js";
                 try { localStorage.setItem('creditcardapp_backup', JSON.stringify(appState)); } catch (e) {}
             }
             return { mutated, error: firstError };
+        }
+
+        function normalizeRecType(t) {
+            if (t === 'expense' || t === 'cash' || t === '消费') return '消费';
+            if (t === 'repayment' || t === '还款') return '还款';
+            if (t === '退款') return '退款';
+            return '消费';
+        }
+        function normalizeChannel(ch) {
+            return ch || '刷卡';
         }
 
         function ensureValidDay(dayStr, label = '日期') {
@@ -428,7 +442,7 @@ function populateRecCardFilter() {
                 const dt = r.ts ? new Date(r.ts) : (r.date ? new Date(r.date) : null);
                 if (!dt) return;
                 const isSameMonth = dt.getFullYear() === today.getFullYear() && dt.getMonth() === today.getMonth();
-                if (isSameMonth) monthlyFee += Number(r.fee || 0);
+                if (isSameMonth && normalizeRecType(r.type) === '消费') monthlyFee += Number(r.fee || 0);
             });
 
             cards.forEach((c, idx) => {
@@ -508,8 +522,8 @@ function populateRecCardFilter() {
                     </div>
                     
                     <div style="text-align:right; margin-top:10px; display:flex; justify-content:flex-end; gap:10px;">
-                        <button onclick="openRecsForCard(${JSON.stringify(c.name)})" style="background:none; border:none; color:var(--primary); font-size:12px; cursor:pointer;">查看流水</button>
-                        <button onclick="delCard(${idx})" style="background:none; border:none; color:#ccc; font-size:12px;">删除卡片</button>
+                        <button class="btn btn-outline dash-rec-btn" data-card-name="${c.name}" style="width:auto; padding:6px 10px; font-size:12px;">查看流水</button>
+                        <button class="btn btn-outline dash-del-btn" data-card-idx="${idx}" style="width:auto; padding:6px 10px; font-size:12px; color:#ccc; border-color:#ccc;">删除卡片</button>
                     </div>
                 </div>`;
             });
@@ -565,6 +579,18 @@ function populateRecCardFilter() {
             if (chartEl) chartEl.style.display = showChart ? 'block' : 'none';
             if (chartBtn) chartBtn.textContent = showChart ? '收起趋势' : '查看趋势';
             if (showChart) renderSpendChart();
+            div.querySelectorAll('.dash-rec-btn').forEach(btn => {
+                btn.addEventListener('click', () => {
+                    const name = btn.getAttribute('data-card-name');
+                    openRecsForCard(name);
+                });
+            });
+            div.querySelectorAll('.dash-del-btn').forEach(btn => {
+                btn.addEventListener('click', () => {
+                    const idx = parseInt(btn.getAttribute('data-card-idx'), 10);
+                    delCard(idx);
+                });
+            });
         }
 
         // --- 记账与流水 ---
@@ -626,7 +652,7 @@ function populateRecCardFilter() {
             let html = '';
             presets.forEach(p => {
                 html += `
-                <div class="dashboard-card" style="padding:12px; margin-bottom:8px;">
+                <div class="dashboard-card preset-item" data-preset-id="${p.id}" style="padding:12px; margin-bottom:8px;">
                     <div style="display:flex; justify-content:space-between; align-items:center;">
                         <div>
                             <div style="font-weight:600;">${p.name}</div>
@@ -641,6 +667,13 @@ function populateRecCardFilter() {
                 btn.addEventListener('click', () => {
                     const pid = btn.getAttribute('data-preset-id');
                     delFeePreset(pid);
+                });
+            });
+            list.querySelectorAll('.preset-item').forEach(item => {
+                item.addEventListener('click', (e) => {
+                    if (e.target && e.target.classList.contains('preset-del-btn')) return;
+                    const pid = item.getAttribute('data-preset-id');
+                    startEditPreset(pid);
                 });
             });
         }
@@ -670,21 +703,28 @@ function populateRecCardFilter() {
 
         function updateRecFormByType() {
             const typeInput = document.querySelector('input[name="r-type"]:checked');
-            const recType = typeInput ? typeInput.value : 'expense';
+            const recType = typeInput ? typeInput.value : '消费';
             const feeSection = document.getElementById('fee-section');
             const presetSelect = document.getElementById('r-preset');
             const rateInput = document.getElementById('r-rate');
             const feeInput = document.getElementById('r-fee');
             const merchInput = document.getElementById('r-merch');
-            const showFee = recType !== 'repayment';
+            const channelSelect = document.getElementById('r-channel');
+            const showFee = recType !== '还款';
             if (feeSection) feeSection.style.display = showFee ? 'block' : 'none';
             if (presetSelect) presetSelect.disabled = !showFee;
+            if (channelSelect) channelSelect.disabled = !showFee;
             if (!showFee) {
                 if (rateInput) rateInput.value = '0';
                 if (feeInput) feeInput.value = '0.00';
                 if (merchInput) merchInput.value = '';
             } else {
-                calc();
+                if (recType === '退款') {
+                    if (rateInput) rateInput.value = '0';
+                    if (feeInput) feeInput.value = '0.00';
+                } else {
+                    calc();
+                }
             }
         }
 
@@ -702,27 +742,36 @@ function populateRecCardFilter() {
             }
             
             let html = '';
-            recs.forEach((r,i) => {
-                const isRepay = r.type === 'repayment';
+            recs.forEach((r) => {
+                const t = normalizeRecType(r.type);
                 const feeVal = Number(r.fee || 0);
-                const amountSign = isRepay ? '+ ' : '- ';
-                const amountColor = isRepay ? 'var(--success)' : 'var(--text)';
-                const feeText = isRepay ? '无手续费' : `手续费 ¥${feeVal.toFixed(2)}`;
-                const feeColor = isRepay ? 'var(--sub-text)' : 'var(--danger)';
+                const isRepay = t === '还款';
+                const isRefund = t === '退款';
+                const amountSign = (isRepay || isRefund) ? '+ ' : '- ';
+                const amountColor = (isRepay || isRefund) ? 'var(--success)' : 'var(--text)';
+                const feeText = t === '消费' ? `手续费 ¥${feeVal.toFixed(2)}` : '无手续费';
+                const feeColor = t === '消费' ? 'var(--danger)' : 'var(--sub-text)';
+                const channel = normalizeChannel(r.channel);
                 html += `
-                <div class="dashboard-card" style="padding:15px; margin-bottom:10px;">
+                <div class="dashboard-card rec-item" data-rec-id="${r.id}" style="padding:15px; margin-bottom:10px;">
                     <div style="display:flex; justify-content:space-between;">
-                        <span style="font-weight:600">${r.cardName}</span>
+                        <span style="font-weight:600">${r.cardName} · ${t}</span>
                         <span style="font-weight:bold; font-size:18px; color:${amountColor};">${amountSign}${r.amount}</span>
                     </div>
                     <div style="display:flex; justify-content:space-between; margin-top:5px; font-size:12px; color:#888;">
-                        <span>${r.date} · ${r.merchant || ''}${isRepay ? ' · 还款' : ''}</span>
+                        <span>${r.date} · ${channel} · ${r.merchant || ''}</span>
                         <span style="color:${feeColor}">${feeText}</span>
                     </div>
-                    <div style="text-align:right; margin-top:5px;"><span onclick="delRec(${JSON.stringify(r.id)})" style="color:#ccc; font-size:12px;">删除</span></div>
+                    <div style="text-align:right; margin-top:5px;"><button class="btn btn-outline rec-del-btn" data-rec-id="${r.id}" style="width:auto; padding:6px 10px; font-size:12px;">删除</button></div>
                 </div>`;
             });
             div.innerHTML = html;
+            div.querySelectorAll('.rec-del-btn').forEach(btn => {
+                btn.addEventListener('click', () => {
+                    const id = btn.getAttribute('data-rec-id');
+                    delRec(id);
+                });
+            });
         }
 
         function openRecModal(cardName) {
@@ -748,7 +797,7 @@ function populateRecCardFilter() {
             if (!activeRecCard) return;
             let recs = (appState.records || []).filter(r => r.cardName === activeRecCard);
             if (recTypeFilter !== 'ALL') {
-                recs = recs.filter(r => (r.type || 'expense') === recTypeFilter);
+                recs = recs.filter(r => normalizeRecType(r.type) === recTypeFilter);
             }
             renderRecs({ records: recs, targetId: 'rec-modal-list' });
         }
@@ -765,10 +814,18 @@ function populateRecCardFilter() {
             if (recordsMode === 'summary') {
                 setRecordsMode('summary');
                 renderRecCardsList();
+                const fab = document.getElementById('fab-add-record');
+                if (fab) fab.style.display = 'flex';
+                const detailFab = document.getElementById('fab-detail-add');
+                if (detailFab) detailFab.style.display = 'none';
                 return;
             }
             // detail
             setRecordsMode('detail');
+            const fab = document.getElementById('fab-add-record');
+            if (fab) fab.style.display = 'none';
+            const detailFab = document.getElementById('fab-detail-add');
+            if (detailFab) detailFab.style.display = 'flex';
             const title = document.getElementById('record-detail-title');
             if (title) title.textContent = activeRecordCardName || '流水明细';
             let recs = (appState.records || []).filter(r => r.cardName === activeRecordCardName);
@@ -836,15 +893,20 @@ function populateRecCardFilter() {
                 let recs = appState.records;
                 let rate = parseFloat(id('r-rate').value) || 0;
                 const typeInput = document.querySelector('input[name="r-type"]:checked');
-                const recType = typeInput ? typeInput.value : 'expense';
+                const recType = typeInput ? typeInput.value : '消费';
                 let fee = 0;
                 let merchantVal = id('r-merch').value;
-                if (recType === 'expense' || recType === 'cash') {
+                let channel = normalizeChannel((document.getElementById('r-channel') || {}).value);
+                if (recType === '消费') {
                     fee = amt * rate / 100;
+                } else if (recType === '退款') {
+                    fee = 0;
+                    rate = 0;
                 } else {
                     fee = 0;
                     rate = 0;
                     merchantVal = '';
+                    channel = '刷卡';
                 }
                 recs.unshift({
                     id: genId(),
@@ -854,7 +916,8 @@ function populateRecCardFilter() {
                     rate,
                     type: recType,
                     date: normalizedDate,
-                    merchant: recType === 'repayment' ? '' : (merchantVal || (recType === 'cash' ? '现金借取' : '消费')),
+                    channel,
+                    merchant: recType === '还款' ? '' : (merchantVal || (recType === '退款' ? '退款' : '消费')),
                     ts: new Date(`${normalizedDate}T00:00:00`).getTime()
                 });
                 recs.sort((a,b)=>b.ts-a.ts);
@@ -904,6 +967,29 @@ function populateRecCardFilter() {
                 if (showChart) renderSpendChart();
             }
         }
+        function fillPresetForm(preset) {
+            const nameEl = document.getElementById('preset-name');
+            const merchEl = document.getElementById('preset-merchant');
+            const rateEl = document.getElementById('preset-rate');
+            if (nameEl) nameEl.value = preset?.name || '';
+            if (merchEl) merchEl.value = preset?.merchantName || '';
+            if (rateEl) rateEl.value = preset?.feeRate ?? '';
+            const btn = document.getElementById('btn-add-preset');
+            if (btn) btn.textContent = preset ? '保存修改' : '新增预设';
+        }
+
+        function startEditPreset(pid) {
+            const preset = (appState.feePresets || []).find(p => p.id === pid);
+            if (!preset) return;
+            editingPresetId = pid;
+            fillPresetForm(preset);
+        }
+
+        function resetPresetForm() {
+            editingPresetId = null;
+            fillPresetForm(null);
+        }
+
         async function addFeePreset() {
             const name = (document.getElementById('preset-name') || {}).value.trim();
             const merchantName = (document.getElementById('preset-merchant') || {}).value.trim();
@@ -911,20 +997,31 @@ function populateRecCardFilter() {
             const feeRate = parseFloat(rateStr);
             if (!name) return showToast('请输入预设名称', 'error');
             if (Number.isNaN(feeRate)) return showToast('请输入费率%', 'error');
-            const preset = { id: genId(), name, merchantName, feeRate };
             appState.feePresets = appState.feePresets || [];
-            appState.feePresets.push(preset);
+            if (editingPresetId) {
+                const idx = appState.feePresets.findIndex(p => p.id === editingPresetId);
+                if (idx >= 0) {
+                    appState.feePresets[idx] = { ...appState.feePresets[idx], name, merchantName, feeRate };
+                }
+            } else {
+                const dupIdx = appState.feePresets.findIndex(p => p.name === name);
+                if (dupIdx >= 0) {
+                    appState.feePresets[dupIdx] = { ...appState.feePresets[dupIdx], name, merchantName, feeRate };
+                } else {
+                    appState.feePresets.push({ id: genId(), name, merchantName, feeRate });
+                }
+            }
             await saveData();
             renderPresetList();
             populatePresetSelect();
-            showToast('预设已保存', 'success');
-            ['preset-name','preset-merchant','preset-rate'].forEach(idVal => {
-                const el = document.getElementById(idVal);
-                if (el) el.value = '';
-            });
+            showToast(editingPresetId ? '预设已更新' : '预设已保存', 'success');
+            resetPresetForm();
         }
         async function delFeePreset(presetId) {
             appState.feePresets = (appState.feePresets || []).filter(p => p.id !== presetId);
+            if (editingPresetId === presetId) {
+                resetPresetForm();
+            }
             await saveData();
             renderPresetList();
             populatePresetSelect();
@@ -932,8 +1029,8 @@ function populateRecCardFilter() {
         }
         function calc() {
             const typeInput = document.querySelector('input[name="r-type"]:checked');
-            const recType = typeInput ? typeInput.value : 'expense';
-            if (recType === 'repayment') {
+            const recType = typeInput ? typeInput.value : '消费';
+            if (recType === '还款') {
                 id('r-fee').value = '0.00';
                 return;
             }
@@ -948,6 +1045,10 @@ function populateRecCardFilter() {
             switchPage(p, { fromHistory, replace });
             if (p !== 'records') {
                 closeRecModal();
+                const detailFab = document.getElementById('fab-detail-add');
+                if (detailFab) detailFab.style.display = 'none';
+                const fab = document.getElementById('fab-add-record');
+                if (fab) fab.style.display = 'none';
             }
             if(p==='home') renderDashboard();
             if(p==='records') {
@@ -963,7 +1064,7 @@ function populateRecCardFilter() {
                 id('r-card').innerHTML = opts;
                 populatePresetSelect();
                 // 默认选择“消费”
-                const expenseRadio = document.querySelector('input[name="r-type"][value="expense"]');
+                const expenseRadio = document.querySelector('input[name="r-type"][value="消费"]');
                 if (expenseRadio) expenseRadio.checked = true;
                 document.querySelectorAll('input[name="r-type"]').forEach(r => {
                     r.onchange = updateRecFormByType;
@@ -973,6 +1074,8 @@ function populateRecCardFilter() {
                     const idx = (appState.cards||[]).findIndex(c => c.name === activeRecordCardName);
                     if (idx >= 0) id('r-card').value = String(idx);
                 }
+                const channelSel = document.getElementById('r-channel');
+                if (channelSel) channelSel.value = '刷卡';
                 updateRecFormByType();
             }
             const tab = document.querySelector(`.tab-item[data-page="${p}"]`);
@@ -1034,6 +1137,8 @@ function populateRecCardFilter() {
             document.querySelectorAll('input[name="r-type"]').forEach(r => {
                 r.addEventListener('change', updateRecFormByType);
             });
+            const detailFab = document.getElementById('fab-detail-add');
+            if (detailFab) detailFab.addEventListener('click', showAddRecord);
         }
         async function toggleDark() { 
             const enabled = document.body.classList.toggle('dark'); 
@@ -1259,7 +1364,8 @@ function populateRecCardFilter() {
             backToRecordSummary,
             openRecsForCard,
             applyFeePreset,
-            calc
+            calc,
+            startEditPreset
         });
 
         console.log('[boot] app.js loaded');

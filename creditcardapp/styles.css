@@ -633,10 +633,30 @@
             cursor: pointer;
             transition: transform 0.12s ease, box-shadow 0.12s ease;
         }
-        .rec-card:active {
-            transform: scale(0.99);
-            box-shadow: 0 12px 24px rgba(15,23,42,0.15);
-        }
+.rec-card:active {
+    transform: scale(0.99);
+    box-shadow: 0 12px 24px rgba(15,23,42,0.15);
+}
+.fab-detail {
+    position: fixed;
+    right: 20px;
+    bottom: 90px;
+    width: 56px;
+    height: 56px;
+    border-radius: 50%;
+    background: radial-gradient(circle at 30% 0, #f9fafb 0, #0f172a 40%, #020617 100%);
+    color: #F9FAFB;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    font-size: 32px;
+    box-shadow: 0 22px 45px rgba(15,23,42,0.7);
+    z-index: 120;
+    cursor: pointer;
+}
+body.dark .fab-detail {
+    background: radial-gradient(circle at 30% 0, #111827 0, #020617 40%, #000 100%);
+}
         
         /* 设置页面连接状态 */
         .sync-status-mini {

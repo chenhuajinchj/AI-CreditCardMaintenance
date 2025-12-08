@@ -16,12 +16,19 @@ export function getLastBillDate(billDay = 1, today = new Date()) {
     return last;
 }
 
+const normalizeType = (t) => {
+    if (t === 'expense' || t === 'cash' || t === '消费') return '消费';
+    if (t === 'repayment' || t === '还款') return '还款';
+    if (t === '退款') return '退款';
+    return '消费';
+};
+
 export function calcCardPeriodStats(card, recs, today = new Date()) {
     const lastBill = getLastBillDate(card.billDay, today);
-    let periodSpend = 0; // 只计算消费与现金
-    let netChange = 0;   // 消费+现金-还款
-    let feeSum = 0;
-    let txCount = 0;
+    let periodSpend = 0; // 消费-退款
+    let netChange = 0;   // 消费-退款-还款
+    let feeSum = 0;      // 只对消费计手续费
+    let txCount = 0;     // 只计算消费笔数
     (recs || []).forEach(r => {
         if (r.cardName !== card.name) return;
         if (!r.date) return;
@@ -30,14 +37,17 @@ export function calcCardPeriodStats(card, recs, today = new Date()) {
         if (rd < lastBill) return;
         const amt = Number(r.amount) || 0;
         const fee = Number(r.fee) || 0;
-        feeSum += fee;
-        txCount += 1;
-        const t = r.type || 'expense';
-        if (t === 'repayment') {
+        const t = normalizeType(r.type);
+        if (t === '还款') {
+            netChange -= amt;
+        } else if (t === '退款') {
+            periodSpend -= amt;
             netChange -= amt;
         } else {
             periodSpend += amt;
             netChange += amt;
+            feeSum += fee;
+            txCount += 1;
         }
     });
     return { periodSpend, netChange, feeSum, txCount, lastBill };
@@ -71,7 +81,7 @@ export function buildMonthlySeries(records = [], today = new Date()) {
         if (!r.date) return;
         const d = new Date(r.date);
         if (d.getFullYear() !== year || d.getMonth() !== month) return;
-        if (r.type === 'repayment') return;
+        if (normalizeType(r.type) !== '消费') return;
         const day = d.getDate(); // 1..daysInMonth
         daily[day - 1] += Number(r.amount) || 0;
     });
