@@ -149,7 +149,8 @@ export function buildMonthlySeries(records = [], today = new Date()) {
 export function computeCardStats(cards = [], records = [], today = new Date()) {
     const perCard = (cards || []).map(card => {
         const limit = Number(card.limit) || 0;
-        let used = 0;
+        const baseUsed = Number(card.currentUsed) || 0;
+        let used = baseUsed;
         let usedCount = 0;
         const lastBill = getLastBillDate(card.billDay, today);
         const nextBill = getNextBillDate(card.billDay, today);
@@ -168,7 +169,7 @@ export function computeCardStats(cards = [], records = [], today = new Date()) {
                 used -= amt;
             }
         });
-        const remain = limit - used;
+        const remain = Math.max(0, limit - used);
         const rate = limit > 0 ? Math.min(1, Math.max(0, used / limit)) : 0;
         return {
             cardName: card.name,
@@ -190,7 +191,8 @@ export function computeCardStats(cards = [], records = [], today = new Date()) {
 export function computeStats(cards = [], records = [], today = new Date()) {
     const perCard = (cards || []).map(card => {
         const limit = Number(card.limit) || 0;
-        let usedAmount = 0;
+        const baseUsed = Number(card.currentUsed) || 0;
+        let usedAmount = baseUsed;
         let usedCount = 0; // 只计消费笔数
         let feeEstimate = 0; // 账单期内手续费（消费）
         const lastBill = getLastBillDate(card.billDay, today);
@@ -210,7 +212,7 @@ export function computeStats(cards = [], records = [], today = new Date()) {
                 usedAmount -= amt;
             }
         });
-        const remaining = limit - usedAmount;
+        const remaining = Math.max(0, limit - usedAmount);
         const usageRate = limit > 0 ? Math.min(1, Math.max(0, usedAmount / limit)) : 0;
         return { cardName: card.name, limit, usedAmount, usedCount, remaining, feeEstimate, usageRate };
     });
