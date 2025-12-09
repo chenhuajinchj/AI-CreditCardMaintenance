@@ -3,7 +3,7 @@
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no">
-    <title>信用卡智囊 (V6.1 仪表盘)</title>
+    <title>信用卡智囊 (V6.2 仪表盘)</title>
     <link rel="manifest" href="manifest.json">
 <link rel="apple-touch-icon" href="icon.png">
 <meta name="apple-mobile-web-app-capable" content="yes">
@@ -110,6 +110,11 @@
             <label>额度</label><input type="number" id="c-limit" placeholder="50000">
             <label>账单日</label><input type="number" id="c-bill" placeholder="每月几号出账">
             <label>当前已用额度/欠款</label><input type="number" id="c-current-used" placeholder="0">
+            <label>已用额度归属账期</label>
+            <select id="c-current-used-period">
+                <option value="current" selected>当前账单期</option>
+                <option value="previous">上一账单期</option>
+            </select>
             <label>卡号后4位（选填）</label><input type="text" id="c-tail" placeholder="8888" maxlength="4" pattern="[0-9]*">
             <button id="btn-add-card" class="btn">保存</button>
             <button class="btn btn-outline nav-btn" data-nav="home">返回</button>

@@ -132,6 +132,10 @@ import { showToast, setButtonLoading } from "./ui.js";
                     mutated = true;
                     return { ...c, currentUsed: 0 };
                 }
+                if (!c.currentUsedPeriod) {
+                    mutated = true;
+                    return { ...c, currentUsedPeriod: 'current' };
+                }
                 return c;
             });
             if (mutated) {
@@ -916,6 +920,7 @@ function populateRecCardFilter() {
         async function doAddCard() {
             const name=id('c-name').value, limit=id('c-limit').value, bill=id('c-bill').value;
             const currentUsedVal = parseFloat(id('c-current-used').value || '0');
+            const currentUsedPeriod = (document.getElementById('c-current-used-period') || {}).value || 'current';
             const tailNum = id('c-tail').value.trim();
             if(!name) return showToast('请填写卡片名称', 'error');
             const billDay = ensureValidDay(bill, '账单日');
@@ -927,7 +932,7 @@ function populateRecCardFilter() {
             setButtonLoading(btn, true, '保存');
             
             try {
-                const newCard = {name, limit:limitVal, billDay, currentUsed: Number.isNaN(currentUsedVal) ? 0 : currentUsedVal};
+                const newCard = {name, limit:limitVal, billDay, currentUsed: Number.isNaN(currentUsedVal) ? 0 : currentUsedVal, currentUsedPeriod};
                 if (tailNum) {
                     newCard.tailNum = tailNum;
                 }

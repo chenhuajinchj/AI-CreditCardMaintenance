@@ -149,7 +149,7 @@ export function buildMonthlySeries(records = [], today = new Date()) {
 export function computeCardStats(cards = [], records = [], today = new Date()) {
     const perCard = (cards || []).map(card => {
         const limit = Number(card.limit) || 0;
-        const baseUsed = Number(card.currentUsed) || 0;
+        const baseUsed = (card.currentUsedPeriod === 'previous') ? 0 : (Number(card.currentUsed) || 0);
         let used = baseUsed;
         let usedCount = 0;
         const lastBill = getLastBillDate(card.billDay, today);
@@ -191,7 +191,7 @@ export function computeCardStats(cards = [], records = [], today = new Date()) {
 export function computeStats(cards = [], records = [], today = new Date()) {
     const perCard = (cards || []).map(card => {
         const limit = Number(card.limit) || 0;
-        const baseUsed = Number(card.currentUsed) || 0;
+        const baseUsed = (card.currentUsedPeriod === 'previous') ? 0 : (Number(card.currentUsed) || 0);
         let usedAmount = baseUsed;
         let usedCount = 0; // 只计消费笔数
         let feeEstimate = 0; // 账单期内手续费（消费）
