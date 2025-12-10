@@ -10,13 +10,14 @@ import { showToast, setButtonLoading } from "./ui.js";
         let spendChart = null;
         let currentUser = null;
         let cardSuggestions = {}; // 存储每张卡片的建议金额（带随机因子）
-        let recFilterCard = 'ALL';
-        let showChart = false;
-        let activeRecCard = null;
-        let recTypeFilter = 'ALL';
-        let recordsMode = 'summary'; // 'summary' | 'detail'
-        let activeRecordCardName = null;
-        let editingPresetId = null;
+let recFilterCard = 'ALL';
+let showChart = false;
+let activeRecCard = null;
+let recTypeFilter = 'ALL';
+let recordsMode = 'summary'; // 'summary' | 'detail'
+let activeRecordCardName = null;
+let editingPresetId = null;
+let periodOffset = 0; // 0 本期，1 上一期，2 上上期
         const GRACE_DAYS = 20;
         const id = x => document.getElementById(x);
         const genId = () => (crypto.randomUUID ? crypto.randomUUID() : `rec_${Date.now()}_${Math.random().toString(16).slice(2)}`);
@@ -444,7 +445,7 @@ function populateRecCardFilter() {
             }
 
             const today = new Date();
-            const stats = statsOverride || computeStats(cards, recs, today);
+            const stats = statsOverride || computeStats(cards, recs, today, periodOffset);
             const monthlyFee = (stats.overview || {}).totalFeeEstimate || 0;
 
             let html = '';
@@ -587,7 +588,7 @@ function populateRecCardFilter() {
                 container.innerHTML = '<p style="text-align:center;color:#999;">请先添加卡片</p>';
                 return;
             }
-            const stats = statsOverride || computeStats(cards, recs, new Date());
+            const stats = statsOverride || computeStats(cards, recs, new Date(), periodOffset);
             let html = '';
             cards.forEach(c => {
                 const per = (stats.perCard || []).find(pc => pc.cardName === c.name) || { usedAmount:0, usedCount:0, usageRate:0, feeEstimate:0 };
@@ -888,13 +889,22 @@ function populateRecCardFilter() {
             if (detailFab) detailFab.style.display = 'flex';
             const title = document.getElementById('record-detail-title');
             if (title) title.textContent = activeRecordCardName || '流水明细';
+            const cards = appState.cards || [];
+            const card = cards.find(c => c.name === activeRecordCardName);
+            const { start, end } = card ? { ...getPeriodBounds(card, new Date(), periodOffset) } : { start: null, end: null };
             let recs = (appState.records || []).filter(r => r.cardName === activeRecordCardName);
+            if (start && end) {
+                recs = recs.filter(r => {
+                    const rd = new Date(r.date);
+                    return rd >= start && rd < end;
+                });
+            }
             recs = recs.slice().sort((a,b) => (b.ts||0)-(a.ts||0));
             renderRecs({ records: recs, targetId: 'record-detail-list' });
         }
 
         function refreshAllSummary() {
-            const stats = computeStats(appState.cards || [], appState.records || [], new Date());
+            const stats = computeStats(appState.cards || [], appState.records || [], new Date(), periodOffset);
             renderDashboard(stats);
             renderRecCardsList(stats);
             if (recordsMode === 'detail') {
@@ -1202,6 +1212,10 @@ function populateRecCardFilter() {
             on('home-add-card-btn', 'click', showAddCard);
             on('records-add-card-btn', 'click', showAddCard);
             on('dark-switch', 'change', toggleDark);
+            on('period-offset', 'change', (e) => {
+                periodOffset = Number(e.target.value) || 0;
+                refreshAllSummary();
+            });
             document.querySelectorAll('.nav-btn[data-nav]').forEach(el => {
                 el.addEventListener('click', () => nav(el.dataset.nav));
             });

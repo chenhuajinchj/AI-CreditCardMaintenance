@@ -66,9 +66,17 @@ export function normalizeAllRecords(records = []) {
     return (records || []).map(normalizeRecord);
 }
 
-export function calcCardPeriodStats(card, recs, today = new Date()) {
-    const lastBill = getLastBillDate(card.billDay, today);
-    const nextBill = getNextBillDate(card.billDay, today);
+function getPeriodBounds(card, today = new Date(), periodOffset = 0) {
+    // 使用参考时间（向前滚 periodOffset 个月）计算账单期上下界
+    const ref = new Date(today);
+    ref.setMonth(ref.getMonth() - periodOffset);
+    const start = getLastBillDate(card.billDay, ref);
+    const end = getNextBillDate(card.billDay, ref);
+    return { start, end };
+}
+
+export function calcCardPeriodStats(card, recs, today = new Date(), periodOffset = 0) {
+    const { start: lastBill, end: nextBill } = getPeriodBounds(card, today, periodOffset);
     let periodSpend = 0; // 消费-退款
     let netChange = 0;   // 消费-退款-还款
     let feeSum = 0;      // 只对消费计手续费
@@ -152,8 +160,7 @@ export function computeCardStats(cards = [], records = [], today = new Date()) {
         const baseUsed = (card.currentUsedPeriod === 'previous') ? 0 : (Number(card.currentUsed) || 0);
         let used = baseUsed;
         let usedCount = 0;
-        const lastBill = getLastBillDate(card.billDay, today);
-        const nextBill = getNextBillDate(card.billDay, today);
+        const { start: lastBill, end: nextBill } = getPeriodBounds(card, today, 0);
         (records || []).forEach(r => {
             if (r.cardName !== card.name) return;
             const t = normalizeType(r.type);
@@ -188,15 +195,14 @@ export function computeCardStats(cards = [], records = [], today = new Date()) {
 }
 
 // 统一统计：概览 + 单卡
-export function computeStats(cards = [], records = [], today = new Date()) {
+export function computeStats(cards = [], records = [], today = new Date(), periodOffset = 0) {
     const perCard = (cards || []).map(card => {
         const limit = Number(card.limit) || 0;
         const baseUsed = (card.currentUsedPeriod === 'previous') ? 0 : (Number(card.currentUsed) || 0);
         let usedAmount = baseUsed;
         let usedCount = 0; // 只计消费笔数
         let feeEstimate = 0; // 账单期内手续费（消费）
-        const lastBill = getLastBillDate(card.billDay, today);
-        const nextBill = getNextBillDate(card.billDay, today);
+        const { start: lastBill, end: nextBill } = getPeriodBounds(card, today, periodOffset);
         (records || []).forEach(r => {
             if (r.cardName !== card.name) return;
             const t = normalizeType(r.type);

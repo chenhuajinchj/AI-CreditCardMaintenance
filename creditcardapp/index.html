@@ -3,7 +3,7 @@
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no">
-    <title>信用卡智囊 (V6.2 仪表盘)</title>
+    <title>信用卡智囊 (V6.3 仪表盘)</title>
     <link rel="manifest" href="manifest.json">
 <link rel="apple-touch-icon" href="icon.png">
 <meta name="apple-mobile-web-app-capable" content="yes">
@@ -51,6 +51,14 @@
 
     <div id="page-records" class="page container">
         <h2>账单流水</h2>
+        <div style="margin:8px 0; display:flex; gap:10px; align-items:center;">
+            <label style="font-size:13px; color:var(--sub-text);">账单期</label>
+            <select id="period-offset" style="flex:0 0 160px;">
+                <option value="0">本期</option>
+                <option value="1">上一期</option>
+                <option value="2">上上期</option>
+            </select>
+        </div>
         <div id="records-summary-view">
             <div style="display:flex; justify-content:flex-end; margin-bottom:10px;">
                 <button class="btn" id="records-add-card-btn">新增卡片</button>
