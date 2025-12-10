@@ -154,13 +154,14 @@ export function buildMonthlySeries(records = [], today = new Date()) {
     return { labels, data };
 }
 
-export function computeCardStats(cards = [], records = [], today = new Date()) {
+export function computeCardStats(cards = [], records = [], today = new Date(), periodOffset = 0) {
     const perCard = (cards || []).map(card => {
         const limit = Number(card.limit) || 0;
-        const baseUsed = (card.currentUsedPeriod === 'previous') ? 0 : (Number(card.currentUsed) || 0);
+        const includeBase = periodOffset === 0 && card.currentUsedPeriod !== 'previous';
+        const baseUsed = includeBase ? (Number(card.currentUsed) || 0) : 0;
         let used = baseUsed;
         let usedCount = 0;
-        const { start: lastBill, end: nextBill } = getPeriodBounds(card, today, 0);
+        const { start: lastBill, end: nextBill } = getPeriodBounds(card, today, periodOffset);
         (records || []).forEach(r => {
             if (r.cardName !== card.name) return;
             const t = normalizeType(r.type);
@@ -198,7 +199,8 @@ export function computeCardStats(cards = [], records = [], today = new Date()) {
 export function computeStats(cards = [], records = [], today = new Date(), periodOffset = 0) {
     const perCard = (cards || []).map(card => {
         const limit = Number(card.limit) || 0;
-        const baseUsed = (card.currentUsedPeriod === 'previous') ? 0 : (Number(card.currentUsed) || 0);
+        const includeBase = periodOffset === 0 && card.currentUsedPeriod !== 'previous';
+        const baseUsed = includeBase ? (Number(card.currentUsed) || 0) : 0;
         let usedAmount = baseUsed;
         let usedCount = 0; // 只计消费笔数
         let feeEstimate = 0; // 账单期内手续费（消费）
