@@ -1,15 +1,16 @@
-import { getNextBillDate, getLastBillDate, calcCardPeriodStats, calcBestCardSuggestion, buildMonthlySeries, computeCardStats, computeStats, normalizeAllRecords } from "./calc.js";
+import { getNextBillDate, getLastBillDate, calcCardPeriodStats, calcBestCardSuggestion, buildMonthlySeries, computeCardStats, computeStats, normalizeAllRecords, normalizeRecType, normalizeChannel, computeMerchantMetrics, computeSceneMetrics } from "./calc.js";
 import { showToast, setButtonLoading } from "./ui.js";
 // --- State & Constants ---
         const supabaseUrl = 'https://kcjlvxbffaxwpcrrxkbq.supabase.co';
         const supabaseKey = 'eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZSIsInJlZiI6Imtjamx2eGJmZmF4d3BjcnJ4a2JxIiwicm9sZSI6ImFub24iLCJpYXQiOjE3NjQ5Mjc1ODAsImV4cCI6MjA4MDUwMzU4MH0.pVvLKUAWoWrQL2nWC9W4eOO_XrbOl_fJW75Z75WbCoY';
         const supabase = window.supabase.createClient(supabaseUrl, supabaseKey);
 
-        let appState = { cards: [], records: [], dark: false, feePresets: [] };
+        let appState = { cards: [], records: [], dark: false, feePresets: [], limitEvents: [] };
         let offlineMode = false;
         let spendChart = null;
         let currentUser = null;
-        let cardSuggestions = {}; // 存储每张卡片的建议金额（带随机因子）
+        let suggestionFactorByCard = {}; // 存储每张卡的建议扰动因子
+        let suggestionSeedByCard = {}; // 存储每张卡当前建议的种子（同日固定）
 let recFilterCard = 'ALL';
 let showChart = false;
 let activeRecCard = null;
@@ -84,16 +85,6 @@ let periodOffset = 0; // 0 本期，1 上一期，2 上上期
             return { mutated, error: firstError };
         }
 
-        function normalizeRecType(t) {
-            if (t === 'expense' || t === 'cash' || t === '消费') return '消费';
-            if (t === 'repayment' || t === '还款') return '还款';
-            if (t === '退款') return '退款';
-            return '消费';
-        }
-        function normalizeChannel(ch) {
-            return ch || '刷卡';
-        }
-
         function ensureValidDay(dayStr, label = '日期') {
             const day = parseInt(dayStr, 10);
             if (!Number.isInteger(day) || day < 1 || day > 31) {
@@ -135,7 +126,28 @@ let periodOffset = 0; // 0 本期，1 上一期，2 上上期
                 }
                 if (!c.currentUsedPeriod) {
                     mutated = true;
-                    return { ...c, currentUsedPeriod: 'current' };
+                    c = { ...c, currentUsedPeriod: 'current' };
+                }
+                // 养卡策略默认值
+                if (typeof c.targetUsageRate !== 'number' || Number.isNaN(c.targetUsageRate)) {
+                    mutated = true;
+                    c = { ...c, targetUsageRate: 0.65 };
+                }
+                if (!Number.isInteger(c.targetTxMin) || c.targetTxMin <= 0) {
+                    mutated = true;
+                    c = { ...c, targetTxMin: 13 };
+                }
+                if (!Number.isInteger(c.targetTxMax) || c.targetTxMax < c.targetTxMin) {
+                    mutated = true;
+                    c = { ...c, targetTxMax: Math.max(18, c.targetTxMin || 13) };
+                }
+                if (typeof c.minIntervalDays !== 'number' || Number.isNaN(c.minIntervalDays) || c.minIntervalDays < 0) {
+                    mutated = true;
+                    c = { ...c, minIntervalDays: 1 };
+                }
+                if (typeof c.merchantMaxShare !== 'number' || Number.isNaN(c.merchantMaxShare) || c.merchantMaxShare <= 0) {
+                    mutated = true;
+                    c = { ...c, merchantMaxShare: 0.25 };
                 }
                 return c;
             });
@@ -145,6 +157,12 @@ let periodOffset = 0; // 0 本期，1 上一期，2 上上期
                 } catch (e) {
                     console.warn('Failed to persist backup after card patch', e);
                 }
+            }
+        }
+
+        function ensureLimitEventsDefaults() {
+            if (!Array.isArray(appState.limitEvents)) {
+                appState.limitEvents = [];
             }
         }
 
@@ -160,6 +178,9 @@ let periodOffset = 0; // 0 本期，1 上一期，2 上上期
                     miniDot.style.background = '#ef4444';
                     miniText.textContent = '连接失败';
                     showToast('同步失败，请检查网络连接', 'error');
+                } else if (status === 'offline') {
+                    miniDot.style.background = '#94a3b8';
+                    miniText.textContent = '离线模式';
                 } else {
                     miniDot.style.background = '#22c55e';
                     miniText.textContent = '已连接';
@@ -182,7 +203,7 @@ let periodOffset = 0; // 0 本期，1 上一期，2 上上期
                 if (error) throw error;
                 if (!data) {
                     // 首次用户，插入空数据
-                    const empty = { cards: [], records: [], dark: false, feePresets: [] };
+                    const empty = { cards: [], records: [], dark: false, feePresets: [], limitEvents: [] };
                     const { error: insertError } = await supabase
                         .from('user_data')
                         .insert({ user_id: currentUser.id, content: empty });
@@ -200,7 +221,8 @@ let periodOffset = 0; // 0 本期，1 上一期，2 上上期
                     cards: content.cards || [],
                     records: normalizeAllRecords(content.records || []),
                     dark: content.dark || false,
-                    feePresets: content.feePresets || []
+                    feePresets: content.feePresets || [],
+                    limitEvents: content.limitEvents || []
                 };
                 if (appState.dark) {
                     document.body.classList.add('dark');
@@ -209,6 +231,7 @@ let periodOffset = 0; // 0 本期，1 上一期，2 上上期
                 }
                 ensureRecordIds();
                 ensureCardDefaults();
+                ensureLimitEventsDefaults();
                 normalizeRecordsInState({ stopOnError: false });
                 // 同步回写一次归一化后的数据，迁移旧结构
                 const before = JSON.stringify(content.records || []);
@@ -237,6 +260,7 @@ let periodOffset = 0; // 0 本期，1 上一期，2 上上期
                     try {
                         appState = JSON.parse(backup);
                         if (!appState.feePresets) appState.feePresets = [];
+                        if (!appState.limitEvents) appState.limitEvents = [];
                         appState.records = normalizeAllRecords(appState.records || []);
                         if (appState.dark) {
                             document.body.classList.add('dark');
@@ -245,6 +269,7 @@ let periodOffset = 0; // 0 本期，1 上一期，2 上上期
                         }
                         ensureRecordIds();
                         ensureCardDefaults();
+                        ensureLimitEventsDefaults();
                         normalizeRecordsInState({ stopOnError: false });
                         if (recordsMode !== 'detail') recordsMode = 'summary';
                         renderPresetList();
@@ -252,14 +277,14 @@ let periodOffset = 0; // 0 本期，1 上一期，2 上上期
                         populateRecCardFilter();
                     } catch (parseError) {
                         console.error('Failed to parse backup data', parseError);
-                        appState = { cards: [], records: [], dark: false, feePresets: [] };
+                        appState = { cards: [], records: [], dark: false, feePresets: [], limitEvents: [] };
                         recordsMode = 'summary';
                         renderPresetList();
                         refreshAllSummary();
                         populateRecCardFilter();
                     }
                 } else {
-                    appState = { cards: [], records: [], dark: false, feePresets: [] };
+                    appState = { cards: [], records: [], dark: false, feePresets: [], limitEvents: [] };
                     recordsMode = 'summary';
                     renderPresetList();
                     refreshAllSummary();
@@ -271,7 +296,9 @@ let periodOffset = 0; // 0 本期，1 上一期，2 上上期
 
         async function saveData() {
             if (offlineMode) {
-                showToast('当前为离线模式：暂不自动同步到云端（避免覆盖）', 'warn');
+                // 离线也落本地，避免用户误以为已保存却刷新丢失
+                try { localStorage.setItem('creditcardapp_backup', JSON.stringify(appState)); } catch (e) {}
+                showToast('已保存到本地（离线模式）', 'warn');
                 return;
             }
             if (!currentUser) {
@@ -406,6 +433,47 @@ function populateRecCardFilter() {
         }
 
         // 刷新单个卡片的建议金额（应用随机因子）
+        function randomInt(min, max) {
+            return Math.floor(Math.random() * (max - min + 1)) + min;
+        }
+
+        function getDailySeedKey(date = new Date()) {
+            return date.toISOString().slice(0,10); // YYYY-MM-DD
+        }
+
+        function ensureSuggestionSeeds() {
+            // 确保每卡有一个默认种子，按日期变换
+            const todayKey = getDailySeedKey();
+            (appState.cards || []).forEach(c => {
+                if (!suggestionSeedByCard[c.name]) {
+                    suggestionSeedByCard[c.name] = { key: todayKey, version: 0 };
+                } else if (suggestionSeedByCard[c.name].key !== todayKey) {
+                    suggestionSeedByCard[c.name] = { key: todayKey, version: 0 };
+                }
+            });
+        }
+
+        function calcSuggestedAmount(card, perStats) {
+            // 返回 { amount, reason }
+            const limit = Number(card.limit) || 0;
+            const used = Math.max(0, perStats.netUsed ?? perStats.usedAmount ?? 0);
+            const min = 10;
+            const maxByHalf = limit * 0.5;
+            const maxByRemain = Math.max(0, limit * 0.70 - used); // 保证剩余≥30%
+            const max = Math.min(maxByHalf, maxByRemain);
+            if (max < min) {
+                return { amount: 0, reason: '接近上限/剩余不足30%' };
+            }
+            const seed = suggestionSeedByCard[card.name]?.version || 0;
+            // 简单用 seed 影响随机：多次刷新 version++，同日不刷新保持原值
+            const rngBase = Math.random() + (seed * 0.01);
+            const clamp = Math.max(min, Math.min(max, Math.floor(min + rngBase * (max - min + 1))));
+            // 二次随机打散（取两次均值，使分布稍偏中间）
+            const another = randomInt(min, max);
+            const amount = Math.floor((clamp + another) / 2);
+            return { amount, reason: '' };
+        }
+
         function refreshCardSuggestion(cardIndex) {
             const cards = appState.cards || [];
             const recs = appState.records || [];
@@ -413,21 +481,12 @@ function populateRecCardFilter() {
             
             const c = cards[cardIndex];
             const today = new Date();
-            const stats = calcCardPeriodStats(c, recs, today);
-            // 重新计算基础建议值
-            let billDay = c.billDay || 1;
-            let daysLeft = (today.getDate() < billDay ? billDay - today.getDate() : (30 - today.getDate() + billDay));
-            let target = c.limit * 0.65;
-            const outstanding = Math.max(0, stats.netChange);
-            let baseSuggest = Math.max(0, (target - outstanding) / daysLeft);
-            
-            // 应用随机因子
-            if (baseSuggest > 0) {
-                const randomFactor = 0.9 + Math.random() * 0.2; // 0.9 ~ 1.1
-                cardSuggestions[c.name] = baseSuggest * randomFactor;
-            } else {
-                cardSuggestions[c.name] = 0;
-            }
+            ensureSuggestionSeeds();
+            const stats = computeStats(cards, recs, today, periodOffset);
+            const per = (stats.perCard || []).find(pc => pc.cardName === c.name) || {};
+            // 刷新种子版本，保证“点击刷新”触发新随机
+            const seedInfo = suggestionSeedByCard[c.name] || { key: getDailySeedKey(today), version: 0 };
+            suggestionSeedByCard[c.name] = { key: getDailySeedKey(today), version: seedInfo.version + 1 };
             
             refreshAllSummary();
             showToast('建议金额已刷新', 'success');
@@ -445,22 +504,33 @@ function populateRecCardFilter() {
             }
 
             const today = new Date();
+            ensureSuggestionSeeds();
             const stats = statsOverride || computeStats(cards, recs, today, periodOffset);
             const monthlyFee = (stats.overview || {}).totalFeeEstimate || 0;
+            const merchantMetrics = computeMerchantMetrics(cards, recs, today, periodOffset);
+            const sceneMetrics = computeSceneMetrics(cards, recs, today, periodOffset);
 
             let html = '';
             cards.forEach((c, idx) => {
-                const per = (stats.perCard || []).find(pc => pc.cardName === c.name) || { usedAmount:0, usedCount:0, remaining:0, usageRate:0 };
+                const per = (stats.perCard || []).find(pc => pc.cardName === c.name) || { periodExpense:0, netUsed:0, usedAmount:0, usedCount:0, remaining:0, usageRate:0 };
                 const billDay = c.billDay || 1;
                 const daysLeft = Math.max(0, Math.ceil((getNextBillDate(billDay, today) - today) / 86400000));
-                const target = c.limit * 0.65;
-                const outstanding = per.usedAmount || 0;
-                const baseSuggest = Math.max(0, (target - outstanding) / Math.max(1, daysLeft));
-
-                if (!(c.name in cardSuggestions)) {
-                    cardSuggestions[c.name] = baseSuggest;
-                }
-                const suggest = cardSuggestions[c.name];
+                const targetRate = typeof c.targetUsageRate === 'number' ? c.targetUsageRate : 0.65;
+                const target = c.limit * targetRate;
+                const outstanding = per.netUsed ?? per.usedAmount ?? 0;
+                const { amount: suggest } = calcSuggestedAmount(c, per);
+                const m = merchantMetrics[c.name] || { topShare: 0, uniqueMerchants: 0, avgIntervalDays: null };
+                const s = sceneMetrics[c.name] || { uniqueScenes: 0, topSceneShare: 0 };
+                const txMin = c.targetTxMin || 13;
+                const txMax = c.targetTxMax || 18;
+                const txCount = per.usedCount || 0;
+                const txOk = txCount >= txMin && txCount <= txMax;
+                const intervalGoal = typeof c.minIntervalDays === 'number' ? c.minIntervalDays : 1;
+                const intervalOk = m.avgIntervalDays == null ? true : m.avgIntervalDays >= intervalGoal;
+                const merchantShareGoal = typeof c.merchantMaxShare === 'number' ? c.merchantMaxShare : 0.25;
+                const merchantOk = m.topShare <= merchantShareGoal + 1e-6;
+                const sceneShare = s.topSceneShare || 0;
+                const sceneOk = s.uniqueScenes >= 3 && sceneShare <= 0.6;
 
                 const percent = Math.min(100, (per.usageRate || 0) * 100);
                 let color = '#007AFF';
@@ -481,8 +551,8 @@ function populateRecCardFilter() {
                     
                     <div class="stat-grid">
                         <div class="stat-item">
-                            <span class="stat-label">本期已刷</span>
-                            <span class="stat-val">¥${(per.usedAmount || 0).toLocaleString()}</span>
+                            <span class="stat-label">本期消费</span>
+                            <span class="stat-val">¥${(per.periodExpense || 0).toLocaleString()}</span>
                         </div>
                         <div class="stat-item" style="text-align:right;">
                             <span class="stat-label">今日建议</span>
@@ -496,14 +566,26 @@ function populateRecCardFilter() {
                             <span class="stat-val">已刷 ${per.usedCount || 0} 笔</span>
                         </div>
                         <div class="stat-item" style="grid-column:1 / span 2; color:var(--sub-text); font-size:13px;">
-                            <span class="stat-label">当前已用/欠款</span>
-                            <span class="stat-val">¥${(per.usedAmount || 0).toLocaleString()}（剩余 ¥${(per.remaining || 0).toLocaleString()}）</span>
+                            <span class="stat-label">当前欠款/已用</span>
+                            <span class="stat-val">¥${(per.netUsed ?? per.usedAmount ?? 0).toLocaleString()}（剩余 ¥${(per.remaining || 0).toLocaleString()}）</span>
                         </div>
                     </div>
 
                     <div class="suggest-pill">
                         <span>${iconCalendar}</span>
-                        <span>距离账单日还有 <b>${daysLeft}</b> 天，建议本期控制在 ¥${target.toLocaleString()}</span>
+                        <span>距账单日 <b>${daysLeft}</b> 天，目标使用率 <b>${(targetRate*100).toFixed(0)}%</b>（¥${target.toLocaleString()}）</span>
+                    </div>
+
+                    <div class="dashboard-card" style="margin-top:12px; padding:12px 14px; box-shadow:none;">
+                        <div style="font-size:13px; color:var(--sub-text); margin-bottom:6px;">养卡指标（本期）</div>
+                        <div style="display:grid; grid-template-columns:1fr 1fr; gap:8px; font-size:13px;">
+                            <div>消费笔数：<b style="color:${txOk ? 'var(--text)' : 'var(--danger)'};">${txCount}</b> / ${txMin}-${txMax}</div>
+                            <div>平均间隔：<b style="color:${intervalOk ? 'var(--text)' : 'var(--danger)'};">${m.avgIntervalDays == null ? '-' : m.avgIntervalDays.toFixed(1)+'天'}</b>（目标 ≥${intervalGoal}天）</div>
+                            <div>单商户占比：<b style="color:${merchantOk ? 'var(--text)' : 'var(--danger)'};">${(m.topShare*100).toFixed(0)}%</b>（目标 ≤${(merchantShareGoal*100).toFixed(0)}%）</div>
+                            <div>商户数：<b>${m.uniqueMerchants}</b></div>
+                            <div>场景数：<b style="color:${sceneOk ? 'var(--text)' : 'var(--danger)'};">${s.uniqueScenes}</b>（建议 ≥3）</div>
+                            <div>单场景占比：<b style="color:${sceneOk ? 'var(--text)' : 'var(--danger)'};">${(sceneShare*100).toFixed(0)}%</b>（建议 ≤60%）</div>
+                        </div>
                     </div>
                     
                     <div style="text-align:right; margin-top:10px; display:flex; justify-content:flex-end; gap:10px;">
@@ -539,8 +621,8 @@ function populateRecCardFilter() {
                             <span class="summary-val">¥${((stats.overview?.totalLimit || 0)/10000).toFixed(1)}万</span>
                         </div>
                         <div class="summary-item">
-                            <span class="summary-label">本期已刷</span>
-                            <span class="summary-val">¥${(stats.overview?.totalUsed || 0).toLocaleString()}</span>
+                            <span class="summary-label">本期消费</span>
+                            <span class="summary-val">¥${(stats.overview?.totalExpense || 0).toLocaleString()}</span>
                         </div>
                         <div class="summary-item">
                             <span class="summary-label">剩余额度</span>
@@ -591,8 +673,9 @@ function populateRecCardFilter() {
             const stats = statsOverride || computeStats(cards, recs, new Date(), periodOffset);
             let html = '';
             cards.forEach(c => {
-                const per = (stats.perCard || []).find(pc => pc.cardName === c.name) || { usedAmount:0, usedCount:0, usageRate:0, feeEstimate:0 };
-                const spent = per.usedAmount || 0;
+                const per = (stats.perCard || []).find(pc => pc.cardName === c.name) || { periodExpense:0, netUsed:0, usedCount:0, usageRate:0, feeEstimate:0 };
+                const spent = per.periodExpense || 0;
+                const netUsed = per.netUsed ?? per.usedAmount ?? 0;
                 const feeSum = per.feeEstimate || 0;
                 const txCount = per.usedCount || 0;
                 const nextBill = getNextBillDate(c.billDay, new Date());
@@ -603,20 +686,24 @@ function populateRecCardFilter() {
                         <span class="card-name">${c.name}</span>
                         <span class="card-limit" style="color:var(--sub-text);">距账单日 ${daysLeft} 天</span>
                     </div>
-                    <div class="stat-grid">
-                        <div class="stat-item">
-                            <span class="stat-label">本期已刷</span>
-                            <span class="stat-val">¥${spent.toLocaleString()}</span>
-                        </div>
-                        <div class="stat-item">
-                            <span class="stat-label">笔数</span>
-                            <span class="stat-val">${txCount}</span>
-                        </div>
-                        <div class="stat-item">
-                            <span class="stat-label">手续费</span>
-                            <span class="stat-val">¥${feeSum.toFixed(2)}</span>
-                        </div>
-                    </div>
+	                    <div class="stat-grid">
+	                        <div class="stat-item">
+	                            <span class="stat-label">本期消费</span>
+	                            <span class="stat-val">¥${spent.toLocaleString()}</span>
+	                        </div>
+	                        <div class="stat-item">
+	                            <span class="stat-label">笔数</span>
+	                            <span class="stat-val">${txCount}</span>
+	                        </div>
+	                        <div class="stat-item">
+	                            <span class="stat-label">当前欠款</span>
+	                            <span class="stat-val">¥${netUsed.toLocaleString()}</span>
+	                        </div>
+	                        <div class="stat-item">
+	                            <span class="stat-label">手续费</span>
+	                            <span class="stat-val">¥${feeSum.toFixed(2)}</span>
+	                        </div>
+	                    </div>
                 </div>`;
             });
             container.innerHTML = html;
@@ -682,7 +769,8 @@ function populateRecCardFilter() {
             const records = (appState.records || []).filter(r => r.cardName === cardName && normalizeRecType(r.type) === '消费' && !refundedIds.has(r.id));
             const opts = ['<option value="">不关联</option>'].concat(records.map(r => {
                 const channel = normalizeChannel(r.channel);
-                return `<option value="${r.id}">${r.date} · ${channel} · ${r.merchant || ''} · ¥${r.amount}</option>`;
+                const scene = r.scene ? ` · ${r.scene}` : '';
+                return `<option value="${r.id}">${r.date} · ${channel} · ${r.merchant || ''}${scene} · ¥${r.amount}</option>`;
             }));
             sel.innerHTML = opts.join('');
             sel.value = '';
@@ -749,6 +837,7 @@ function populateRecCardFilter() {
             showEl(presetSelect, showConsumeFields);
             showEl(document.getElementById('fee-group'), showConsumeFields);
             showEl(document.getElementById('merchant-group'), showConsumeFields);
+            showEl(document.getElementById('scene-group'), showConsumeFields);
             showEl(refundSection, showRefund);
 
             // 控件禁用状态
@@ -820,7 +909,7 @@ function populateRecCardFilter() {
                         <span class="amount-text" style="font-weight:bold; font-size:18px; color:${amountColor};">${amountSign}${r.amount}</span>
                     </div>
                     <div style="display:flex; justify-content:space-between; margin-top:5px; font-size:12px; color:#888;">
-                        <span>${r.date} · ${channel} · ${r.merchant || ''}</span>
+                        <span>${r.date} · ${channel} · ${r.merchant || ''}${r.scene ? ' · ' + r.scene : ''}</span>
                         <span style="color:${feeColor}">${feeText}</span>
                     </div>
                     <div style="text-align:right; margin-top:5px;"><button class="btn btn-outline rec-del-btn" data-rec-id="${r.id}" style="width:auto; padding:6px 10px; font-size:12px;">删除</button></div>
@@ -895,7 +984,7 @@ function populateRecCardFilter() {
             let recs = (appState.records || []).filter(r => r.cardName === activeRecordCardName);
             if (start && end) {
                 recs = recs.filter(r => {
-                    const rd = new Date(r.date);
+                    const rd = new Date(`${r.date}T00:00:00`);
                     return rd >= start && rd < end;
                 });
             }
@@ -911,6 +1000,8 @@ function populateRecCardFilter() {
                 renderRecordsPage();
             }
             if (showChart) renderSpendChart();
+            populateLimitCardSelect();
+            renderLimitEvents();
         }
 
         function showRecordDetail(cardName) {
@@ -932,17 +1023,38 @@ function populateRecCardFilter() {
             const currentUsedVal = parseFloat(id('c-current-used').value || '0');
             const currentUsedPeriod = (document.getElementById('c-current-used-period') || {}).value || 'current';
             const tailNum = id('c-tail').value.trim();
+            const targetUsagePct = parseFloat((document.getElementById('c-target-usage') || {}).value || '65');
+            const txMin = parseInt((document.getElementById('c-tx-min') || {}).value || '13', 10);
+            const txMax = parseInt((document.getElementById('c-tx-max') || {}).value || '18', 10);
+            const minIntervalDays = parseInt((document.getElementById('c-min-interval') || {}).value || '1', 10);
+            const merchantMaxSharePct = parseFloat((document.getElementById('c-merchant-max-share') || {}).value || '25');
             if(!name) return showToast('请填写卡片名称', 'error');
             const billDay = ensureValidDay(bill, '账单日');
             if (billDay === null) return;
             const limitVal = parseFloat(limit);
             if (Number.isNaN(limitVal)) return showToast('请填写额度', 'error');
+            const targetUsageRate = Math.min(0.95, Math.max(0.01, (Number.isFinite(targetUsagePct) ? targetUsagePct : 65) / 100));
+            const safeTxMin = Number.isInteger(txMin) && txMin > 0 ? txMin : 13;
+            const safeTxMax = Number.isInteger(txMax) && txMax >= safeTxMin ? txMax : Math.max(18, safeTxMin);
+            const safeMinInterval = Number.isInteger(minIntervalDays) && minIntervalDays >= 0 ? minIntervalDays : 1;
+            const merchantMaxShare = Math.min(1, Math.max(0.05, (Number.isFinite(merchantMaxSharePct) ? merchantMaxSharePct : 25) / 100));
             
             const btn = document.getElementById('btn-add-card');
             setButtonLoading(btn, true, '保存');
             
             try {
-                const newCard = {name, limit:limitVal, billDay, currentUsed: Number.isNaN(currentUsedVal) ? 0 : currentUsedVal, currentUsedPeriod};
+                const newCard = {
+                    name,
+                    limit:limitVal,
+                    billDay,
+                    currentUsed: Number.isNaN(currentUsedVal) ? 0 : currentUsedVal,
+                    currentUsedPeriod,
+                    targetUsageRate,
+                    targetTxMin: safeTxMin,
+                    targetTxMax: safeTxMax,
+                    minIntervalDays: safeMinInterval,
+                    merchantMaxShare
+                };
                 if (tailNum) {
                     newCard.tailNum = tailNum;
                 }
@@ -978,6 +1090,8 @@ function populateRecCardFilter() {
                 const recType = typeInput ? typeInput.value : '消费';
                 let fee = 0;
                 let merchantVal = id('r-merch').value;
+                const sceneSelect = document.getElementById('r-scene');
+                let sceneVal = (sceneSelect && sceneSelect.value) ? sceneSelect.value : '';
                 let channel = normalizeChannel((document.getElementById('r-channel') || {}).value);
                 const refundSource = (document.getElementById('r-refund-src') || {}).value || '';
                 let amountVal = amt;
@@ -989,13 +1103,22 @@ function populateRecCardFilter() {
                     if (!refundSource) return showToast('请选择要退款的消费记录', 'warn');
                     const target = (appState.records || []).find(r => r.id === refundSource);
                     if (!target) return showToast('关联消费不存在', 'error');
-                    amountVal = Number(target.amount) || 0;
+                    const originalAmt = Number(target.amount) || 0;
+                    const refundedSoFar = (appState.records || [])
+                        .filter(r => normalizeRecType(r.type) === '退款' && r.refundForId === refundSource)
+                        .reduce((s, r) => s + (Number(r.amount) || 0), 0);
+                    const maxRefundable = Math.max(0, originalAmt - refundedSoFar);
+                    const desired = Number.isFinite(amt) && amt > 0 ? amt : maxRefundable;
+                    if (desired <= 0) return showToast('该消费已无可退金额', 'warn');
+                    if (desired > maxRefundable + 1e-6) return showToast(`退款金额不能超过可退 ¥${maxRefundable.toFixed(2)}`, 'error');
+                    amountVal = desired;
                     const amtInput = document.getElementById('r-amt');
                     if (amtInput) amtInput.value = amountVal;
                     fee = 0;
                     rate = 0;
                     channel = normalizeChannel(target.channel);
                     merchantVal = target.merchant || '退款';
+                    sceneVal = target.scene || '';
                 } else {
                     if (!amt) return showToast('请填写金额', 'error');
                     fee = 0;
@@ -1003,6 +1126,7 @@ function populateRecCardFilter() {
                     merchantVal = '';
                     channel = '刷卡';
                     amountVal = amt;
+                    sceneVal = '';
                 }
                 recs.unshift({
                     id: genId(),
@@ -1015,6 +1139,7 @@ function populateRecCardFilter() {
                     date: normalizedDate,
                     channel,
                     merchant: recType === '还款' ? '' : (merchantVal || (recType === '退款' ? '退款' : '消费')),
+                    scene: sceneVal,
                     refundForId: recType === '退款' ? refundSource : '',
                     ts: new Date(`${normalizedDate}T00:00:00`).getTime()
                 });
@@ -1030,13 +1155,14 @@ function populateRecCardFilter() {
             }
         }
         async function delCard(i) {
-            if(confirm('删?')) {
+            const name = appState.cards[i]?.name || '';
+            if(confirm(`确定删除卡片${name ? '「' + name + '」' : ''}？对应流水也会一起删除。`)) {
                 const removed = appState.cards[i]?.name;
                 appState.cards.splice(i,1);
                 if (removed) {
                     appState.records = (appState.records||[]).filter(r=>r.cardName !== removed);
-                    // 删除对应的建议值
-                    delete cardSuggestions[removed];
+                    // 删除对应的扰动因子
+                    delete suggestionFactorByCard[removed];
                     if (recFilterCard === removed) {
                         recFilterCard = 'ALL';
                     }
@@ -1053,7 +1179,7 @@ function populateRecCardFilter() {
             }
         }
         async function delRec(recId) {
-            if(confirm('删?')) {
+            if(confirm('确定删除这条流水？')) {
                 const idx = (appState.records || []).findIndex(r => r.id === recId);
                 if (idx === -1) return;
                 appState.records.splice(idx,1);
@@ -1084,6 +1210,81 @@ function populateRecCardFilter() {
         function resetPresetForm() {
             editingPresetId = null;
             fillPresetForm(null);
+        }
+
+        // --- 额度变化记录 ---
+        function populateLimitCardSelect() {
+            const sel = document.getElementById('l-card');
+            if (!sel) return;
+            const opts = (appState.cards || []).map((c, i) => `<option value="${i}">${c.name}</option>`);
+            sel.innerHTML = opts.join('');
+        }
+
+        function renderLimitEvents() {
+            const list = document.getElementById('limit-event-list');
+            if (!list) return;
+            const events = (appState.limitEvents || []).slice().sort((a,b)=> (b.ts||0)-(a.ts||0));
+            if (!events.length) {
+                list.innerHTML = '<p style="font-size:12px; color:var(--sub-text);">暂无记录</p>';
+                return;
+            }
+            let html = '';
+            events.forEach(e => {
+                const delta = (Number(e.after)||0) - (Number(e.before)||0);
+                const sign = delta >= 0 ? '+' : '';
+                html += `
+                <div class="dashboard-card" style="padding:12px; margin-bottom:8px;">
+                    <div style="display:flex; justify-content:space-between; align-items:center;">
+                        <div>
+                            <div style="font-weight:600;">${e.cardName} · ${e.type}</div>
+                            <div style="font-size:12px; color:var(--sub-text);">${e.date} · ¥${e.before} → ¥${e.after}（${sign}${delta}）</div>
+                            ${e.note ? `<div style="font-size:12px; color:var(--sub-text); margin-top:4px;">${e.note}</div>` : ''}
+                        </div>
+                        <button class="btn btn-outline limit-del-btn" data-limit-id="${e.id}" style="width:auto; padding:6px 10px; margin-top:0;">删除</button>
+                    </div>
+                </div>`;
+            });
+            list.innerHTML = html;
+            list.querySelectorAll('.limit-del-btn').forEach(btn => {
+                btn.addEventListener('click', () => delLimitEvent(btn.dataset.limitId));
+            });
+        }
+
+        async function addLimitEvent() {
+            ensureLimitEventsDefaults();
+            const cardIdx = parseInt((document.getElementById('l-card') || {}).value || '0', 10);
+            const card = (appState.cards || [])[cardIdx];
+            if (!card) return showToast('请先添加卡片', 'error');
+            const date = (document.getElementById('l-date') || {}).value;
+            const dateRes = normalizeDateInput(date);
+            if (dateRes.error) return showToast(dateRes.error, 'error');
+            const type = (document.getElementById('l-type') || {}).value || '固额';
+            const before = parseFloat((document.getElementById('l-before') || {}).value || '');
+            const after = parseFloat((document.getElementById('l-after') || {}).value || '');
+            if (!Number.isFinite(before) || !Number.isFinite(after)) return showToast('请填写原/新额度', 'error');
+            const note = ((document.getElementById('l-note') || {}).value || '').trim();
+            const ev = {
+                id: genId(),
+                cardName: card.name,
+                date: dateRes.value,
+                type,
+                before,
+                after,
+                note,
+                ts: new Date(`${dateRes.value}T00:00:00`).getTime()
+            };
+            appState.limitEvents.unshift(ev);
+            await saveData();
+            renderLimitEvents();
+            showToast('额度记录已添加', 'success');
+        }
+
+        async function delLimitEvent(idVal) {
+            if (!idVal) return;
+            if (!confirm('确定删除该额度记录？')) return;
+            appState.limitEvents = (appState.limitEvents || []).filter(e => e.id !== idVal);
+            await saveData();
+            renderLimitEvents();
         }
 
         async function addFeePreset() {
@@ -1132,7 +1333,9 @@ function populateRecCardFilter() {
                 id('r-fee').value = '0.00';
                 return;
             }
-            id('r-fee').value = (id('r-amt').value * id('r-rate').value / 100).toFixed(2);
+            const amtVal = parseFloat(id('r-amt').value) || 0;
+            const rateVal = parseFloat(id('r-rate').value) || 0;
+            id('r-fee').value = (amtVal * rateVal / 100).toFixed(2);
         }
         
         // --- Routing & Events ---
@@ -1154,7 +1357,19 @@ function populateRecCardFilter() {
                 if (!activeRecordCardName) recordsMode = 'summary';
                 renderRecordsPage();
             }
-            if(p==='add-card') { id('c-name').value=''; id('c-limit').value=''; id('c-bill').value=''; id('c-tail').value=''; id('c-current-used').value=''; }
+            if(p==='add-card') {
+                id('c-name').value=''; id('c-limit').value=''; id('c-bill').value=''; id('c-tail').value=''; id('c-current-used').value='';
+                const tUsage = document.getElementById('c-target-usage');
+                const tMin = document.getElementById('c-tx-min');
+                const tMax = document.getElementById('c-tx-max');
+                const tInterval = document.getElementById('c-min-interval');
+                const tShare = document.getElementById('c-merchant-max-share');
+                if (tUsage) tUsage.value = '65';
+                if (tMin) tMin.value = '13';
+                if (tMax) tMax.value = '18';
+                if (tInterval) tInterval.value = '1';
+                if (tShare) tShare.value = '25';
+            }
             if(p==='add-rec') { 
                 id('r-date').value = new Date().toISOString().split('T')[0];
                 id('r-amt').value=''; id('r-fee').value='';
@@ -1174,6 +1389,8 @@ function populateRecCardFilter() {
                 }
                 const channelSel = document.getElementById('r-channel');
                 if (channelSel) channelSel.value = '刷卡';
+                const sceneSel = document.getElementById('r-scene');
+                if (sceneSel) sceneSel.value = '';
                 populateRefundSources();
                 updateRecFormByType();
             }
@@ -1207,6 +1424,7 @@ function populateRecCardFilter() {
             on('btn-clear', 'click', clearData);
             on('btn-logout', 'click', handleLogout);
             on('btn-add-preset', 'click', addFeePreset);
+            on('btn-add-limit-event', 'click', addLimitEvent);
             on('btn-add-card', 'click', doAddCard);
             on('btn-add-rec', 'click', doAddRec);
             on('home-add-card-btn', 'click', showAddCard);
@@ -1283,8 +1501,8 @@ function populateRecCardFilter() {
             }
         }
         async function clearData() { 
-            if(confirm('清空?')) { 
-                appState = { cards: [], records: [], dark: false, feePresets: [] };
+            if(confirm('确定清空所有卡片与流水？此操作不可恢复。')) { 
+                appState = { cards: [], records: [], dark: false, feePresets: [], limitEvents: [] };
                 document.body.classList.remove('dark');
                 const darkSwitch = document.getElementById('dark-switch');
                 if (darkSwitch) darkSwitch.checked = false;
@@ -1415,7 +1633,7 @@ function populateRecCardFilter() {
         async function handleLogout() {
             await supabase.auth.signOut();
             currentUser = null;
-            appState = { cards: [], records: [], dark: false };
+            appState = { cards: [], records: [], dark: false, feePresets: [], limitEvents: [] };
             showAuthPage();
             location.reload();
         }

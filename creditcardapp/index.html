@@ -3,7 +3,7 @@
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no">
-    <title>信用卡智囊 (V6.4 仪表盘)</title>
+    <title>信用卡智囊 (V6.5 仪表盘)</title>
     <link rel="manifest" href="manifest.json">
 <link rel="apple-touch-icon" href="icon.png">
 <meta name="apple-mobile-web-app-capable" content="yes">
@@ -104,6 +104,33 @@
                 <button class="btn btn-outline" id="btn-add-preset">新增预设</button>
                 <div id="preset-list" style="margin-top:10px;"></div>
             </div>
+            <hr style="border:0; border-top:1px solid #eee; margin:16px 0; opacity:0.1;">
+            <div style="margin-top:10px;">
+                <div style="font-weight:600; margin-bottom:8px;">额度变化记录</div>
+                <label>选择卡片</label>
+                <select id="l-card"></select>
+                <label>日期</label>
+                <input type="date" id="l-date">
+                <label>类型</label>
+                <select id="l-type">
+                    <option value="固额">固额</option>
+                    <option value="临额">临额</option>
+                </select>
+                <div style="display:flex; gap:10px;">
+                    <div style="flex:1">
+                        <label>原额度</label>
+                        <input type="number" id="l-before" placeholder="50000">
+                    </div>
+                    <div style="flex:1">
+                        <label>新额度</label>
+                        <input type="number" id="l-after" placeholder="60000">
+                    </div>
+                </div>
+                <label>备注（选填）</label>
+                <input type="text" id="l-note" placeholder="例如：活动提额/系统自动">
+                <button class="btn btn-outline" id="btn-add-limit-event">添加记录</button>
+                <div id="limit-event-list" style="margin-top:10px;"></div>
+            </div>
             <div class="sync-status-mini" id="sync-status-mini">
                 <span class="sync-status-mini-dot" id="sync-status-mini-dot"></span>
                 <span id="sync-status-mini-text">已连接</span>
@@ -111,23 +138,33 @@
         </div>
     </div>
 
-    <div id="page-add-card" class="page container">
-        <h2>新卡片</h2>
-        <div class="dashboard-card">
-            <label>名称</label><input type="text" id="c-name" placeholder="例如：招商Young">
-            <label>额度</label><input type="number" id="c-limit" placeholder="50000">
-            <label>账单日</label><input type="number" id="c-bill" placeholder="每月几号出账">
-            <label>当前已用额度/欠款</label><input type="number" id="c-current-used" placeholder="0">
-            <label>已用额度归属账期</label>
-            <select id="c-current-used-period">
-                <option value="current" selected>当前账单期</option>
-                <option value="previous">上一账单期</option>
-            </select>
-            <label>卡号后4位（选填）</label><input type="text" id="c-tail" placeholder="8888" maxlength="4" pattern="[0-9]*">
-            <button id="btn-add-card" class="btn">保存</button>
-            <button class="btn btn-outline nav-btn" data-nav="home">返回</button>
-        </div>
-    </div>
+	    <div id="page-add-card" class="page container">
+	        <h2>新卡片</h2>
+	        <div class="dashboard-card">
+	            <label>名称</label><input type="text" id="c-name" placeholder="例如：招商Young">
+	            <label>额度</label><input type="number" id="c-limit" placeholder="50000">
+	            <label>账单日</label><input type="number" id="c-bill" placeholder="每月几号出账">
+	            <label>当前已用额度/欠款</label><input type="number" id="c-current-used" placeholder="0">
+	            <label>已用额度归属账期</label>
+	            <select id="c-current-used-period">
+	                <option value="current" selected>当前账单期</option>
+	                <option value="previous">上一账单期</option>
+	            </select>
+	            <hr style="border:0; border-top:1px solid #eee; margin:16px 0; opacity:0.1;">
+	            <div style="font-weight:600; margin-bottom:8px;">养卡策略（可改）</div>
+	            <label>目标使用率%</label><input type="number" id="c-target-usage" placeholder="65" value="65" min="1" max="95" step="1">
+	            <label>目标笔数（本期消费）</label>
+	            <div style="display:flex; gap:10px;">
+	                <input type="number" id="c-tx-min" placeholder="最少" value="13" min="1" step="1" style="flex:1">
+	                <input type="number" id="c-tx-max" placeholder="最多" value="18" min="1" step="1" style="flex:1">
+	            </div>
+	            <label>单笔最小间隔（天）</label><input type="number" id="c-min-interval" placeholder="建议 ≥1" value="1" min="0" step="1">
+	            <label>单一商户占比上限%</label><input type="number" id="c-merchant-max-share" placeholder="25" value="25" min="5" max="100" step="1">
+	            <label>卡号后4位（选填）</label><input type="text" id="c-tail" placeholder="8888" maxlength="4" pattern="[0-9]*">
+	            <button id="btn-add-card" class="btn">保存</button>
+	            <button class="btn btn-outline nav-btn" data-nav="home">返回</button>
+	        </div>
+	    </div>
 
         <div id="page-add-rec" class="page container">
         <h2>记一笔</h2>
@@ -163,6 +200,20 @@
                     <div style="flex:1"><label>手续费</label><input type="text" id="r-fee" disabled style="color:red"></div>
                 </div>
                 <div id="merchant-group"><label>商户</label><input type="text" id="r-merch"></div>
+                <div id="scene-group">
+                    <label>场景标签</label>
+                    <select id="r-scene">
+                        <option value="">不填</option>
+                        <option value="餐饮">餐饮</option>
+                        <option value="超市">超市</option>
+                        <option value="线上">线上</option>
+                        <option value="线下">线下</option>
+                        <option value="分期">分期</option>
+                        <option value="交通">交通</option>
+                        <option value="娱乐">娱乐</option>
+                        <option value="其它">其它</option>
+                    </select>
+                </div>
                 <div id="refund-section">
                     <label>关联消费（退款时选）</label>
                     <select id="r-refund-src"></select>

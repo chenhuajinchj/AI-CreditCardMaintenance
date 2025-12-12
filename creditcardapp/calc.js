@@ -16,18 +16,114 @@ export function getLastBillDate(billDay = 1, today = new Date()) {
     return last;
 }
 
-const normalizeType = (t) => {
+export const normalizeRecType = (t) => {
     if (t === 'expense' || t === 'cash' || t === '消费') return '消费';
     if (t === 'repayment' || t === '还款') return '还款';
     if (t === '退款') return '退款';
     return '消费';
 };
 
+export const normalizeChannel = (ch) => ch || '刷卡';
+
 const amountOf = (r) => {
     const raw = r?.amountNum ?? r?.amount ?? 0;
     const n = Number(raw);
     return Number.isFinite(n) ? n : 0;
 };
+
+const parseLocalDate = (dateStr) => {
+    if (!dateStr) return new Date(NaN);
+    return new Date(`${dateStr}T00:00:00`);
+};
+
+export function computeMerchantMetrics(cards = [], records = [], today = new Date(), periodOffset = 0) {
+    const res = {};
+    (cards || []).forEach(card => {
+        const ref = new Date(today);
+        ref.setMonth(ref.getMonth() - periodOffset);
+        const start = getLastBillDate(card.billDay, ref);
+        const end = getNextBillDate(card.billDay, ref);
+
+        const expenseRecs = (records || []).filter(r => {
+            if (r.cardName !== card.name) return false;
+            if (normalizeRecType(r.type) !== '消费') return false;
+            const d = parseLocalDate(r.date);
+            if (Number.isNaN(d.getTime())) return false;
+            return d >= start && d < end;
+        });
+
+        const byMerchantAmt = new Map();
+        let totalAmt = 0;
+        const tsList = [];
+        expenseRecs.forEach(r => {
+            const merch = (r.merchant || '').trim() || '未知商户';
+            const amt = amountOf(r);
+            totalAmt += amt;
+            byMerchantAmt.set(merch, (byMerchantAmt.get(merch) || 0) + amt);
+            const t = parseLocalDate(r.date).getTime();
+            if (!Number.isNaN(t)) tsList.push(t);
+        });
+
+        let topShare = 0;
+        if (totalAmt > 0) {
+            for (const v of byMerchantAmt.values()) {
+                topShare = Math.max(topShare, v / totalAmt);
+            }
+        }
+        tsList.sort((a,b)=>a-b);
+        let avgIntervalDays = null;
+        if (tsList.length >= 2) {
+            let sum = 0;
+            for (let i = 1; i < tsList.length; i++) {
+                sum += (tsList[i] - tsList[i-1]) / 86400000;
+            }
+            avgIntervalDays = sum / (tsList.length - 1);
+        }
+
+        res[card.name] = {
+            topShare,
+            uniqueMerchants: byMerchantAmt.size,
+            avgIntervalDays
+        };
+    });
+    return res;
+}
+
+export function computeSceneMetrics(cards = [], records = [], today = new Date(), periodOffset = 0) {
+    const res = {};
+    (cards || []).forEach(card => {
+        const ref = new Date(today);
+        ref.setMonth(ref.getMonth() - periodOffset);
+        const start = getLastBillDate(card.billDay, ref);
+        const end = getNextBillDate(card.billDay, ref);
+        const expenseRecs = (records || []).filter(r => {
+            if (r.cardName !== card.name) return false;
+            if (normalizeRecType(r.type) !== '消费') return false;
+            const d = parseLocalDate(r.date);
+            if (Number.isNaN(d.getTime())) return false;
+            return d >= start && d < end;
+        });
+        const bySceneAmt = new Map();
+        let totalAmt = 0;
+        expenseRecs.forEach(r => {
+            const scene = (r.scene || '').trim() || '未标注';
+            const amt = amountOf(r);
+            totalAmt += amt;
+            bySceneAmt.set(scene, (bySceneAmt.get(scene) || 0) + amt);
+        });
+        let topSceneShare = 0;
+        if (totalAmt > 0) {
+            for (const v of bySceneAmt.values()) {
+                topSceneShare = Math.max(topSceneShare, v / totalAmt);
+            }
+        }
+        res[card.name] = {
+            uniqueScenes: bySceneAmt.size,
+            topSceneShare
+        };
+    });
+    return res;
+}
 
 // 旧数据归一化：将早期版本的记录结构映射到当前统一格式
 // 观察到的差异（示例）：旧记录可能只有 type: "消费"/"还款" 或英文 "expense"/"repay"，没有 amountNum/channel/refundForId 字段
@@ -56,8 +152,9 @@ export function normalizeRecord(raw = {}) {
     const fee = Number(r.fee ?? 0);
     r.fee = Number.isFinite(fee) ? fee : 0;
     // 补齐字段
-    r.channel = r.channel || '刷卡';
+    r.channel = normalizeChannel(r.channel);
     r.refundForId = r.refundForId || '';
+    r.scene = r.scene || '';
     if (!r.cardName && r.card) r.cardName = r.card;
     return r;
 }
@@ -84,12 +181,12 @@ export function calcCardPeriodStats(card, recs, today = new Date(), periodOffset
     (recs || []).forEach(r => {
         if (r.cardName !== card.name) return;
         if (!r.date) return;
-        const rd = new Date(r.date);
+        const rd = parseLocalDate(r.date);
         if (Number.isNaN(rd.getTime())) return;
         if (rd < lastBill || rd >= nextBill) return;
         const amt = amountOf(r);
         const fee = Number(r.fee) || 0;
-        const t = normalizeType(r.type);
+        const t = normalizeRecType(r.type);
         if (t === '还款') {
             netChange -= amt;
         } else if (t === '退款') {
@@ -131,14 +228,14 @@ export function buildMonthlySeries(records = [], today = new Date()) {
 
     records.forEach(r => {
         if (!r.date) return;
-        const d = new Date(r.date);
+        const d = parseLocalDate(r.date);
         if (d.getFullYear() !== year || d.getMonth() !== month) return;
-        const t = normalizeType(r.type);
+        const t = normalizeRecType(r.type);
         const day = d.getDate(); // 1..daysInMonth
         const amt = amountOf(r);
         if (t === '消费') {
             daily[day - 1] += amt;
-        } else if (t === '退款' || t === '还款') {
+        } else if (t === '退款') {
             daily[day - 1] -= amt;
         }
     });
@@ -164,9 +261,9 @@ export function computeCardStats(cards = [], records = [], today = new Date(), p
         const { start: lastBill, end: nextBill } = getPeriodBounds(card, today, periodOffset);
         (records || []).forEach(r => {
             if (r.cardName !== card.name) return;
-            const t = normalizeType(r.type);
+            const t = normalizeRecType(r.type);
             const amt = amountOf(r);
-            const rd = new Date(r.date);
+            const rd = parseLocalDate(r.date);
             if (Number.isNaN(rd.getTime())) return;
             // 账单期判断：使用账单日
             if (rd < lastBill || rd >= nextBill) return;
@@ -201,38 +298,74 @@ export function computeStats(cards = [], records = [], today = new Date(), perio
         const limit = Number(card.limit) || 0;
         const includeBase = periodOffset === 0 && card.currentUsedPeriod !== 'previous';
         const baseUsed = includeBase ? (Number(card.currentUsed) || 0) : 0;
-        let usedAmount = baseUsed;
-        let usedCount = 0; // 只计消费笔数
-        let feeEstimate = 0; // 账单期内手续费（消费）
+        let netUsed = baseUsed;     // 欠款/净占用（消费-退款-还款）
+        let periodExpense = 0;      // 消费额
+        let periodRefund = 0;       // 退款额
+        let periodRepay = 0;        // 还款额
+        let usedCount = 0;          // 只计消费笔数
+        let feeEstimate = 0;        // 账单期内手续费（消费）
         const { start: lastBill, end: nextBill } = getPeriodBounds(card, today, periodOffset);
         (records || []).forEach(r => {
             if (r.cardName !== card.name) return;
-            const t = normalizeType(r.type);
-            const rd = new Date(r.date);
+            const t = normalizeRecType(r.type);
+            const rd = parseLocalDate(r.date);
             if (Number.isNaN(rd.getTime())) return;
             if (rd < lastBill || rd >= nextBill) return;
             const amt = amountOf(r);
             if (t === '消费') {
-                usedAmount += amt;
+                netUsed += amt;
+                periodExpense += amt;
                 usedCount += 1;
                 feeEstimate += Number(r.fee || 0);
-            } else if (t === '退款' || t === '还款') {
-                usedAmount -= amt;
+            } else if (t === '退款') {
+                netUsed -= amt;
+                periodRefund += amt;
+            } else if (t === '还款') {
+                netUsed -= amt;
+                periodRepay += amt;
             }
         });
-        const remaining = Math.max(0, limit - usedAmount);
-        const usageRate = limit > 0 ? Math.min(1, Math.max(0, usedAmount / limit)) : 0;
-        return { cardName: card.name, limit, usedAmount, usedCount, remaining, feeEstimate, usageRate };
+        const remaining = Math.max(0, limit - netUsed);
+        const usageRate = limit > 0 ? Math.min(1, Math.max(0, netUsed / limit)) : 0;
+        return {
+            cardName: card.name,
+            limit,
+            // 旧字段（兼容 UI）：usedAmount 表示净占用
+            usedAmount: netUsed,
+            // 新字段
+            netUsed,
+            periodExpense,
+            periodRefund,
+            periodRepay,
+            usedCount,
+            remaining,
+            feeEstimate,
+            usageRate
+        };
     });
 
     const totalLimit = perCard.reduce((s,c)=>s + c.limit, 0);
-    const totalUsed = perCard.reduce((s,c)=>s + c.usedAmount, 0);
-    const totalFeeEstimate = perCard.reduce((s,c)=>s + c.feeEstimate, 0);
-    const totalRemaining = Math.max(0, totalLimit - totalUsed);
-    const usageRate = totalLimit > 0 ? Math.min(1, totalUsed / totalLimit) : 0;
+    const totalNetUsed = perCard.reduce((s,c)=>s + (c.netUsed || 0), 0);
+    const totalExpense = perCard.reduce((s,c)=>s + (c.periodExpense || 0), 0);
+    const totalRefund = perCard.reduce((s,c)=>s + (c.periodRefund || 0), 0);
+    const totalRepay = perCard.reduce((s,c)=>s + (c.periodRepay || 0), 0);
+    const totalFeeEstimate = perCard.reduce((s,c)=>s + (c.feeEstimate || 0), 0);
+    const totalRemaining = Math.max(0, totalLimit - totalNetUsed);
+    const usageRate = totalLimit > 0 ? Math.min(1, totalNetUsed / totalLimit) : 0;
 
     return {
-        overview: { totalLimit, totalUsed, totalRemaining, totalFeeEstimate, usageRate },
+        overview: {
+            totalLimit,
+            totalExpense,
+            totalRefund,
+            totalRepay,
+            totalNetUsed,
+            // 旧字段兼容
+            totalUsed: totalNetUsed,
+            totalRemaining,
+            totalFeeEstimate,
+            usageRate
+        },
         perCard
     };
 }
