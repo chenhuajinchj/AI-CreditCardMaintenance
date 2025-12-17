@@ -16,6 +16,197 @@ export function getLastBillDate(billDay = 1, today = new Date()) {
     return last;
 }
 
+const formatLocalYMD = (dt) => {
+    if (!(dt instanceof Date) || Number.isNaN(dt.getTime())) return '';
+    const y = dt.getFullYear();
+    const m = String(dt.getMonth() + 1).padStart(2, '0');
+    const d = String(dt.getDate()).padStart(2, '0');
+    return `${y}-${m}-${d}`;
+};
+
+const daysInMonth = (year, monthIndex) => new Date(year, monthIndex + 1, 0).getDate();
+
+const clampDayInMonth = (year, monthIndex, day) => {
+    const dim = daysInMonth(year, monthIndex);
+    const d = Math.max(1, Math.min(dim, Number(day) || 1));
+    return d;
+};
+
+const addDaysLocal = (dt, days) => {
+    const d = new Date(dt);
+    d.setDate(d.getDate() + days);
+    return d;
+};
+
+const normalizeDueDay = (dueDay) => {
+    const d = parseInt(dueDay, 10);
+    if (!Number.isInteger(d) || d < 1) return 1;
+    return Math.min(28, d);
+};
+
+const normalizeBillDay = (billDay) => {
+    const d = parseInt(billDay, 10);
+    if (!Number.isInteger(d) || d < 1) return 1;
+    return Math.min(31, d);
+};
+
+const nextOccurrenceOfDay = (day, today = new Date(), { includeToday = true } = {}) => {
+    const d = normalizeBillDay(day);
+    const y = today.getFullYear();
+    const m = today.getMonth();
+    const thisMonthDay = clampDayInMonth(y, m, d);
+    const candidate = new Date(y, m, thisMonthDay);
+    const cmp = includeToday ? (today.getDate() <= d) : (today.getDate() < d);
+    if (cmp) return candidate;
+    const ny = m === 11 ? y + 1 : y;
+    const nm = (m + 1) % 12;
+    const nextMonthDay = clampDayInMonth(ny, nm, d);
+    return new Date(ny, nm, nextMonthDay);
+};
+
+const firstOccurrenceOfDueDayAfter = (dueDay, afterDate) => {
+    const d = normalizeDueDay(dueDay);
+    const y = afterDate.getFullYear();
+    const m = afterDate.getMonth();
+    const thisMonthDay = clampDayInMonth(y, m, d);
+    const candidate = new Date(y, m, thisMonthDay);
+    if (candidate > afterDate) return candidate;
+    const ny = m === 11 ? y + 1 : y;
+    const nm = (m + 1) % 12;
+    const nextMonthDay = clampDayInMonth(ny, nm, d);
+    return new Date(ny, nm, nextMonthDay);
+};
+
+export function computeRepaymentStrategy({
+    billDay,
+    dueDay,
+    today = new Date(),
+    currentUsed = 0,
+    limit = 0
+} = {}) {
+    const bill = normalizeBillDay(billDay);
+    const due = normalizeDueDay(dueDay);
+    const used = Math.max(0, Number(currentUsed) || 0);
+    const lim = Math.max(0, Number(limit) || 0);
+
+    const nextStatementDate = nextOccurrenceOfDay(bill, today, { includeToday: true });
+    const nextDueDate = firstOccurrenceOfDueDayAfter(due, nextStatementDate);
+
+    const safetyPadDate = addDaysLocal(nextStatementDate, 2);
+    const clearDate = addDaysLocal(nextDueDate, -2);
+
+    const usage = lim > 0 ? used / lim : 0;
+    const targetLow = lim * 0.60;
+    const targetHigh = lim * 0.70;
+    const targetOutstanding = lim * 0.65;
+
+    let stage1Amount = 0;
+    if (lim > 0 && usage > 0.70 + 1e-9) {
+        stage1Amount = Math.max(0, used - targetHigh);
+    }
+    stage1Amount = Math.min(stage1Amount, used);
+    const remainingAfterStage1 = Math.max(0, used - stage1Amount);
+    const stage2Amount = remainingAfterStage1;
+
+    const stages = [];
+    const makeStage = (date, amount, title, note = '') => ({
+        title,
+        date: formatLocalYMD(date),
+        amount: Math.max(0, Math.round((Number(amount) || 0) * 100) / 100),
+        note
+    });
+
+    if (lim <= 0) {
+        stages.push(makeStage(clearDate, 0, '清零', '额度为 0，无法计算使用率'));
+    } else if (used <= 0) {
+        stages.push(makeStage(clearDate, 0, '清零', '当前欠款为 0'));
+    } else if (clearDate <= safetyPadDate) {
+        stages.push(makeStage(clearDate, used, '一次性清零', '账期太短，建议一次性在到期日前完成还款'));
+    } else {
+        stages.push(
+            makeStage(
+                safetyPadDate,
+                stage1Amount,
+                '安全垫还款',
+                stage1Amount > 0
+                    ? `将使用率压到约 60%-70%（目标欠款 ¥${Math.round(targetOutstanding).toLocaleString()}）`
+                    : `当前使用率约 ${(usage * 100).toFixed(0)}%，可跳过第一段`
+            )
+        );
+        stages.push(makeStage(clearDate, stage2Amount, '到期前清零', '到期日前 2 天清零避免息差风险'));
+    }
+
+    const nextAction = stages
+        .filter(s => s.amount > 0)
+        .find(s => {
+            const dt = parseLocalDate(s.date);
+            const t0 = new Date(today.getFullYear(), today.getMonth(), today.getDate());
+            return dt >= t0;
+        }) || stages.find(s => s.amount > 0) || stages[0];
+
+    const reason =
+        lim <= 0 ? '额度为 0，无法给出还款建议' :
+        used <= 0 ? '当前欠款为 0，无需还款' :
+        usage > 0.70 + 1e-9 ? `当前使用率 ${(usage * 100).toFixed(0)}%，先压到 60%-70% 更利于养卡` :
+        `按到期日前 2 天清零，保持免息`;
+
+    return {
+        nextStatementDate: formatLocalYMD(nextStatementDate),
+        nextDueDate: formatLocalYMD(nextDueDate),
+        recommendedPlan: {
+            safetyPadDate: formatLocalYMD(safetyPadDate),
+            clearDate: formatLocalYMD(clearDate),
+            target: {
+                low: Math.round(targetLow * 100) / 100,
+                high: Math.round(targetHigh * 100) / 100
+            },
+            stages,
+            nextAction: nextAction ? { date: nextAction.date, amount: nextAction.amount } : { date: '', amount: 0 },
+            reason
+        }
+    };
+}
+
+export function selfTestRepaymentStrategy() {
+    const cases = [
+        {
+            name: '月底跨月',
+            input: { billDay: 28, dueDay: 10, today: new Date('2025-01-27T00:00:00'), currentUsed: 7000, limit: 10000 }
+        },
+        {
+            name: 'billDay>dueDay',
+            input: { billDay: 17, dueDay: 7, today: new Date('2025-12-17T00:00:00'), currentUsed: 8000, limit: 10000 }
+        },
+        {
+            name: '2月处理',
+            input: { billDay: 31, dueDay: 20, today: new Date('2025-02-10T00:00:00'), currentUsed: 5000, limit: 10000 }
+        },
+        {
+            name: '今天刚好账单日/到期日',
+            input: { billDay: 10, dueDay: 30, today: new Date('2025-03-10T00:00:00'), currentUsed: 3000, limit: 10000 }
+        },
+        {
+            name: 'limit=0',
+            input: { billDay: 10, dueDay: 20, today: new Date('2025-03-05T00:00:00'), currentUsed: 3000, limit: 0 }
+        },
+        {
+            name: 'currentUsed=0',
+            input: { billDay: 10, dueDay: 20, today: new Date('2025-03-05T00:00:00'), currentUsed: 0, limit: 10000 }
+        }
+    ];
+
+    const results = cases.map(c => {
+        const out = computeRepaymentStrategy(c.input);
+        const okDates = Boolean(out.nextStatementDate) && Boolean(out.nextDueDate);
+        const okOrder = out.nextStatementDate <= out.nextDueDate;
+        const okStages = Array.isArray(out.recommendedPlan?.stages) && out.recommendedPlan.stages.length >= 1;
+        const ok = okDates && okOrder && okStages;
+        return { name: c.name, ok, out };
+    });
+
+    return results;
+}
+
 export const normalizeRecType = (t) => {
     if (t === 'expense' || t === 'cash' || t === '消费') return '消费';
     if (t === 'repayment' || t === '还款') return '还款';

@@ -1,4 +1,4 @@
-import { getNextBillDate, getLastBillDate, getPeriodBounds, calcCardPeriodStats, calcBestCardSuggestion, buildMonthlySeries, computeCardStats, computeStats, normalizeAllRecords, normalizeRecType, normalizeChannel, computeMerchantMetrics, computeSceneMetrics } from "./calc.js";
+import { getNextBillDate, getLastBillDate, getPeriodBounds, computeRepaymentStrategy, selfTestRepaymentStrategy, calcCardPeriodStats, calcBestCardSuggestion, buildMonthlySeries, computeCardStats, computeStats, normalizeAllRecords, normalizeRecType, normalizeChannel, computeMerchantMetrics, computeSceneMetrics } from "./calc.js";
 import { showToast, setButtonLoading } from "./ui.js";
 // --- State & Constants ---
         const supabaseUrl = 'https://kcjlvxbffaxwpcrrxkbq.supabase.co';
@@ -18,7 +18,9 @@ let recTypeFilter = 'ALL';
 let recordsMode = 'summary'; // 'summary' | 'detail'
 let activeRecordCardName = null;
 let editingPresetId = null;
+let editingCardIndex = null;
 let periodOffset = 0; // 0 本期，1 上一期，2 上上期
+let scrollPosByRoute = {};
         const GRACE_DAYS = 20;
         const id = x => document.getElementById(x);
         const genId = () => (crypto.randomUUID ? crypto.randomUUID() : `rec_${Date.now()}_${Math.random().toString(16).slice(2)}`);
@@ -94,6 +96,15 @@ let periodOffset = 0; // 0 本期，1 上一期，2 上上期
             return day;
         }
 
+        function ensureValidDueDay(dayStr, label = '到期还款日') {
+            const day = parseInt(dayStr, 10);
+            if (!Number.isInteger(day) || day < 1 || day > 28) {
+                showToast(`${label}需为 1-28 的整数`, 'error');
+                return null;
+            }
+            return day;
+        }
+
         // --- Date & Strategy Calculations ---
 // moved to calc.js
 // --- Storage & Sync ---
@@ -127,6 +138,12 @@ let periodOffset = 0; // 0 本期，1 上一期，2 上上期
                 if (!c.currentUsedPeriod) {
                     mutated = true;
                     c = { ...c, currentUsedPeriod: 'current' };
+                }
+                if (!Number.isInteger(c.dueDay) || c.dueDay < 1 || c.dueDay > 28) {
+                    const billDay = Number.isInteger(c.billDay) && c.billDay >= 1 ? c.billDay : 1;
+                    const suggested = ((billDay + 20 - 1) % 28) + 1;
+                    mutated = true;
+                    c = { ...c, dueDay: suggested };
                 }
                 // 养卡策略默认值
                 if (typeof c.targetUsageRate !== 'number' || Number.isNaN(c.targetUsageRate)) {
@@ -481,6 +498,71 @@ function populateRecCardFilter() {
             return { amount, reason: '' };
         }
 
+        function calcSuggestedRange(card, perStats) {
+            const limit = Number(card?.limit) || 0;
+            const used = Math.max(0, perStats?.netUsed ?? perStats?.usedAmount ?? 0);
+            const min = 10;
+            const maxByHalf = limit * 0.5;
+            const maxByRemain = Math.max(0, limit * 0.70 - used); // 保证剩余≥30%
+            const max = Math.floor(Math.min(maxByHalf, maxByRemain));
+            if (max < min) return { min: 0, max: 0 };
+            return { min, max };
+        }
+
+        async function copyTextToClipboard(text) {
+            const str = String(text || '').trim();
+            if (!str) return;
+            try {
+                if (navigator.clipboard && navigator.clipboard.writeText) {
+                    await navigator.clipboard.writeText(str);
+                } else {
+                    const ta = document.createElement('textarea');
+                    ta.value = str;
+                    ta.style.position = 'fixed';
+                    ta.style.opacity = '0';
+                    document.body.appendChild(ta);
+                    ta.select();
+                    document.execCommand('copy');
+                    document.body.removeChild(ta);
+                }
+                showToast('已复制', 'success');
+            } catch (e) {
+                showToast('复制失败：' + (e.message || '未知错误'), 'error');
+            }
+        }
+
+        function initDensity() {
+            const saved = localStorage.getItem('ui_density') || 'compact';
+            document.body.classList.toggle('density-comfort', saved === 'comfort');
+        }
+
+        function toggleDensity() {
+            const next = document.body.classList.contains('density-comfort') ? 'compact' : 'comfort';
+            document.body.classList.toggle('density-comfort', next === 'comfort');
+            try { localStorage.setItem('ui_density', next); } catch (e) {}
+            refreshAllSummary();
+        }
+
+        function setRoute(path) {
+            const p = String(path || '').trim();
+            const normalized = p.startsWith('/') ? p : '/' + p;
+            const next = '#'+normalized;
+            if (location.hash !== next) location.hash = next;
+        }
+
+        function parseRoute() {
+            const raw = location.hash || '';
+            if (!raw || raw === '#') return { path: '/home', params: new URLSearchParams() };
+            if (raw.startsWith('#/')) {
+                const h = raw.slice(1);
+                const [p, qs = ''] = h.split('?');
+                return { path: p || '/home', params: new URLSearchParams(qs) };
+            }
+            // 兼容旧 hash：#home
+            const legacy = raw.startsWith('#') ? raw.slice(1) : raw;
+            return { path: '/' + (legacy || 'home'), params: new URLSearchParams() };
+        }
+
         function refreshCardSuggestion(cardIndex) {
             const cards = appState.cards || [];
             const recs = appState.records || [];
@@ -504,6 +586,7 @@ function populateRecCardFilter() {
             const cards = appState.cards || [];
             const recs = appState.records || [];
             const div = document.getElementById('card-dashboard');
+            if (!div) return;
             
             if(!cards.length) {
                 div.innerHTML = '<p style="text-align:center;color:#999;margin-top:50px;">点击底部 "添加" 添加第一张卡片</p>';
@@ -667,6 +750,306 @@ function populateRecCardFilter() {
                     delCard(idx);
                 });
             });
+        }
+
+        function renderHomeView(statsOverride) {
+            const cards = appState.cards || [];
+            const recs = appState.records || [];
+            const kpiEl = document.getElementById('home-kpi');
+            const recoEl = document.getElementById('home-today-reco');
+            const repayEl = document.getElementById('home-repay-reco');
+            const listEl = document.getElementById('home-card-list');
+            if (!kpiEl || !recoEl || !repayEl || !listEl) return;
+
+            const today = new Date();
+            ensureSuggestionSeeds();
+            const stats = statsOverride || computeStats(cards, recs, today, periodOffset);
+            const ov = stats.overview || {};
+
+            const fmtMoney = (n, digits = 0) => {
+                const num = Number(n) || 0;
+                return '¥' + num.toLocaleString(undefined, { minimumFractionDigits: digits, maximumFractionDigits: digits });
+            };
+            const fmtPct = (p) => `${((Number(p) || 0) * 100).toFixed(0)}%`;
+
+            const totalLimit = ov.totalLimit || 0;
+            const totalUsedThisPeriod = (ov.totalExpense || 0) - (ov.totalRefund || 0);
+            const totalDebt = ov.totalNetUsed || 0;
+
+            kpiEl.innerHTML = `
+                <div class="kpi-item">
+                    <div class="kpi-label">总额度</div>
+                    <div class="kpi-value">${fmtMoney(totalLimit)}</div>
+                    <div class="kpi-sub">${(totalLimit / 10000).toFixed(1)} 万</div>
+                </div>
+                <div class="kpi-item">
+                    <div class="kpi-label">本期已用</div>
+                    <div class="kpi-value">${fmtMoney(totalUsedThisPeriod)}</div>
+                    <div class="kpi-sub">消费-退款</div>
+                </div>
+                <div class="kpi-item">
+                    <div class="kpi-label">当前欠款</div>
+                    <div class="kpi-value">${fmtMoney(totalDebt)}</div>
+                    <div class="kpi-sub">净占用</div>
+                </div>
+                <div class="kpi-item">
+                    <div class="kpi-label">总使用率</div>
+                    <div class="kpi-value">${fmtPct(ov.usageRate || 0)}</div>
+                    <div class="kpi-sub">欠款/总额度</div>
+                </div>
+            `;
+
+            // 今日刷卡推荐
+            const best = calcBestCardSuggestion(cards || [], today, GRACE_DAYS);
+            let todaySuggestText = '暂无推荐（请先添加卡片）';
+            let todayCopyText = '';
+            if (best) {
+                const card = (cards || []).find(c => c.name === best.cardName) || cards[0];
+                const per = (stats.perCard || []).find(pc => pc.cardName === card?.name) || {};
+                const range = calcSuggestedRange(card, per);
+                const mid = range.max >= range.min ? Math.floor((range.min + range.max) / 2) : 0;
+                todaySuggestText = `${best.cardName} · 建议 ¥${range.min.toLocaleString()}-${range.max.toLocaleString()}（免息期约 ${best.freeDays} 天）`;
+                todayCopyText = `今日刷卡建议：${best.cardName} ¥${mid.toLocaleString()}（范围 ¥${range.min.toLocaleString()}-${range.max.toLocaleString()}）`;
+            }
+            recoEl.innerHTML = `
+                <div style="display:flex; justify-content:space-between; align-items:center; gap:10px; margin-bottom:10px;">
+                    <div style="font-weight:800;">今日刷卡推荐</div>
+                    <button class="btn btn-sm btn-outline" id="btn-copy-today-reco" type="button">一键复制建议</button>
+                </div>
+                <div style="font-size:14px; color:var(--text-main); font-weight:600;">${todaySuggestText}</div>
+                <div style="font-size:12px; color:var(--text-secondary); margin-top:6px;">复制后可粘贴到记账备注</div>
+            `;
+            const copyBtn = document.getElementById('btn-copy-today-reco');
+            if (copyBtn) copyBtn.onclick = () => copyTextToClipboard(todayCopyText || todaySuggestText);
+
+            // 还款策略（下一次动作 + 每卡可展开）
+            let nextRepay = null;
+            const repayItems = (cards || []).map(c => {
+                const per = (stats.perCard || []).find(pc => pc.cardName === c.name) || {};
+                const used = per.netUsed ?? per.usedAmount ?? 0;
+                const dueDay = Number.isInteger(c.dueDay) ? c.dueDay : (((c.billDay || 1) + 20 - 1) % 28) + 1;
+                const plan = computeRepaymentStrategy({ billDay: c.billDay, dueDay, today, currentUsed: used, limit: c.limit });
+                const na = plan?.recommendedPlan?.nextAction || { date: '', amount: 0 };
+                if (na.date && na.amount > 0) {
+                    if (!nextRepay || na.date < nextRepay.date) nextRepay = { cardName: c.name, ...na, reason: plan.recommendedPlan.reason };
+                }
+                return { card: c, plan };
+            });
+
+            let repaySummary = '暂无建议（当前欠款为 0 或未设置卡片）';
+            if (nextRepay) {
+                repaySummary = `${nextRepay.cardName} · ${nextRepay.date} 还款 ${fmtMoney(nextRepay.amount)}（${nextRepay.reason}）`;
+            }
+            repayEl.innerHTML = `
+                <div style="display:flex; justify-content:space-between; align-items:center; gap:10px; margin-bottom:10px;">
+                    <div style="font-weight:800;">建议还款时间/策略</div>
+                    <button class="btn btn-sm btn-secondary" type="button" id="btn-open-cards">查看卡片</button>
+                </div>
+                <div style="font-size:14px; color:var(--text-main); font-weight:600; margin-bottom:10px;">${repaySummary}</div>
+                <details style="margin:0;">
+                    <summary style="cursor:pointer; color:var(--text-secondary); font-size:12px;">展开查看各卡完整计划</summary>
+                    <div style="margin-top:10px;">
+                        ${(repayItems || []).map(({ card, plan }) => {
+                            const rp = plan?.recommendedPlan;
+                            const stages = rp?.stages || [];
+                            const due = plan?.nextDueDate || '';
+                            const stmt = plan?.nextStatementDate || '';
+                            return `
+                                <details style="margin:8px 0;">
+                                    <summary style="cursor:pointer; color:var(--text-main); font-weight:700;">${card.name} · 账单 ${stmt} · 到期 ${due}</summary>
+                                    <div style="margin-top:8px; font-size:12px; color:var(--text-secondary);">${rp?.reason || ''}</div>
+                                    <div style="margin-top:8px; display:flex; flex-direction:column; gap:8px;">
+                                        ${stages.map(s => `
+                                            <div style="display:flex; justify-content:space-between; gap:10px; background:rgba(0,0,0,0.03); padding:10px 12px; border-radius:12px;">
+                                                <div>
+                                                    <div style="font-weight:700; color:var(--text-main);">${s.title}</div>
+                                                    <div style="font-size:12px; color:var(--text-secondary);">${s.date}${s.note ? ' · ' + s.note : ''}</div>
+                                                </div>
+                                                <div style="font-weight:800; color:var(--text-main);">${fmtMoney(s.amount)}</div>
+                                            </div>
+                                        `).join('')}
+                                    </div>
+                                </details>
+                            `;
+                        }).join('')}
+                    </div>
+                </details>
+            `;
+            const openCardsBtn = document.getElementById('btn-open-cards');
+            if (openCardsBtn) openCardsBtn.onclick = () => setRoute('/cards');
+
+            // 各卡概览列表
+            const densityBtn = document.getElementById('btn-density-toggle');
+            if (densityBtn) densityBtn.textContent = document.body.classList.contains('density-comfort') ? '舒适模式' : '紧凑模式';
+            if (densityBtn) densityBtn.onclick = () => toggleDensity();
+
+            if (!cards.length) {
+                listEl.innerHTML = '<div style="color:var(--text-secondary); font-size:13px;">暂无卡片，先去“卡片”添加</div>';
+                return;
+            }
+            const maxRows = 5;
+            const rows = (cards || []).slice(0, maxRows);
+            const more = (cards || []).length > maxRows;
+            listEl.innerHTML = rows.map(c => {
+                const per = (stats.perCard || []).find(pc => pc.cardName === c.name) || {};
+                const tail = c.tailNum ? `(${c.tailNum})` : '';
+                const usage = per.usageRate || 0;
+                const spent = per.periodExpense || 0;
+                const repaid = per.periodRepay || 0;
+                const txCount = per.usedCount || 0;
+                return `
+                    <div class="card-row" data-card-name="${c.name}">
+                        <div>
+                            <div class="card-row-title">${c.name} ${tail}</div>
+                            <div class="card-row-sub">本期已刷 ${fmtMoney(spent)} · 已还 ${fmtMoney(repaid)} · 笔数 ${txCount}</div>
+                        </div>
+                        <div class="card-row-metrics">
+                            <div class="big">${fmtPct(usage)}</div>
+                            <div class="small">使用率</div>
+                        </div>
+                    </div>
+                `;
+            }).join('') + (more ? `
+                <div class="card-row" data-card-name="" style="justify-content:center; text-align:center;">
+                    <div style="grid-column:1 / -1; text-align:center; font-weight:700; color:var(--primary);">查看更多卡片</div>
+                </div>
+            ` : '');
+            listEl.querySelectorAll('.card-row').forEach(row => {
+                row.addEventListener('click', () => {
+                    const name = row.getAttribute('data-card-name');
+                    if (name) setRoute(`/cards?name=${encodeURIComponent(name)}`);
+                    else setRoute('/cards');
+                });
+            });
+        }
+
+        function renderCardsView(statsOverride, routeParams = new URLSearchParams()) {
+            const listEl = document.getElementById('cards-list');
+            const detailEl = document.getElementById('cards-detail-content');
+            if (!listEl || !detailEl) return;
+
+            const cards = appState.cards || [];
+            const recs = appState.records || [];
+            const today = new Date();
+            const stats = statsOverride || computeStats(cards, recs, today, periodOffset);
+
+            const fmtMoney = (n, digits = 0) => {
+                const num = Number(n) || 0;
+                return '¥' + num.toLocaleString(undefined, { minimumFractionDigits: digits, maximumFractionDigits: digits });
+            };
+            const fmtPct = (p) => `${((Number(p) || 0) * 100).toFixed(0)}%`;
+
+            if (!cards.length) {
+                listEl.innerHTML = '<div style="color:var(--text-secondary); font-size:13px;">暂无卡片，先新增</div>';
+                detailEl.innerHTML = '<div style="color:var(--text-secondary);">暂无卡片</div>';
+                return;
+            }
+
+            listEl.innerHTML = (cards || []).map(c => {
+                const per = (stats.perCard || []).find(pc => pc.cardName === c.name) || {};
+                const usage = per.usageRate || 0;
+                const tail = c.tailNum ? `(${c.tailNum})` : '';
+                return `
+                    <div class="card-row" data-card-name="${c.name}">
+                        <div>
+                            <div class="card-row-title">${c.name} ${tail}</div>
+                            <div class="card-row-sub">使用率 ${fmtPct(usage)} · 欠款 ${fmtMoney(per.netUsed ?? per.usedAmount ?? 0)}</div>
+                        </div>
+                        <div class="card-row-metrics">
+                            <div class="big">${fmtMoney(per.periodExpense || 0)}</div>
+                            <div class="small">本期消费</div>
+                        </div>
+                    </div>
+                `;
+            }).join('');
+            listEl.querySelectorAll('.card-row').forEach(row => {
+                row.addEventListener('click', () => {
+                    const name = row.getAttribute('data-card-name');
+                    if (name) setRoute(`/cards?name=${encodeURIComponent(name)}`);
+                });
+            });
+
+            const selectedName = routeParams.get('name') || '';
+            const card = (cards || []).find(c => c.name === selectedName) || null;
+            if (!card) {
+                detailEl.innerHTML = '<div style="color:var(--text-secondary);">选择一张卡查看详情</div>';
+                return;
+            }
+            const idx = (cards || []).findIndex(c => c.name === card.name);
+            const per = (stats.perCard || []).find(pc => pc.cardName === card.name) || {};
+            const used = per.netUsed ?? per.usedAmount ?? 0;
+            const dueDay = Number.isInteger(card.dueDay) ? card.dueDay : (((card.billDay || 1) + 20 - 1) % 28) + 1;
+            const plan = computeRepaymentStrategy({ billDay: card.billDay, dueDay, today, currentUsed: used, limit: card.limit });
+            const stages = plan?.recommendedPlan?.stages || [];
+
+            detailEl.innerHTML = `
+                <div style="display:flex; justify-content:space-between; align-items:flex-start; gap:12px; margin-bottom:14px;">
+                    <div>
+                        <div style="font-size:20px; font-weight:800;">${card.name}${card.tailNum ? ` (${card.tailNum})` : ''}</div>
+                        <div style="font-size:12px; color:var(--text-secondary); margin-top:4px;">额度 ${fmtMoney(card.limit)} · 账单日 ${card.billDay} · 到期 ${dueDay}</div>
+                    </div>
+                    <div style="text-align:right;">
+                        <div style="font-size:12px; color:var(--text-secondary);">使用率</div>
+                        <div style="font-size:22px; font-weight:900;">${fmtPct(per.usageRate || 0)}</div>
+                    </div>
+                </div>
+
+                <div class="kpi-grid" style="grid-template-columns:repeat(2, minmax(0,1fr)); margin-bottom:16px;">
+                    <div class="kpi-item">
+                        <div class="kpi-label">当前欠款</div>
+                        <div class="kpi-value">${fmtMoney(used)}</div>
+                        <div class="kpi-sub">净占用</div>
+                    </div>
+                    <div class="kpi-item">
+                        <div class="kpi-label">剩余额度</div>
+                        <div class="kpi-value">${fmtMoney(per.remaining || 0)}</div>
+                        <div class="kpi-sub">可用</div>
+                    </div>
+                    <div class="kpi-item">
+                        <div class="kpi-label">本期已刷</div>
+                        <div class="kpi-value">${fmtMoney(per.periodExpense || 0)}</div>
+                        <div class="kpi-sub">消费</div>
+                    </div>
+                    <div class="kpi-item">
+                        <div class="kpi-label">本期已还</div>
+                        <div class="kpi-value">${fmtMoney(per.periodRepay || 0)}</div>
+                        <div class="kpi-sub">还款</div>
+                    </div>
+                </div>
+
+                <div class="dashboard-card compact-card" style="padding:16px; margin-bottom:16px;">
+                    <div style="font-weight:800; margin-bottom:10px;">建议还款时间/策略</div>
+                    <div style="font-size:12px; color:var(--text-secondary); margin-bottom:10px;">下次账单 ${plan.nextStatementDate} · 到期 ${plan.nextDueDate}</div>
+                    <div style="display:flex; flex-direction:column; gap:8px;">
+                        ${stages.map(s => `
+                            <div style="display:flex; justify-content:space-between; gap:10px; background:rgba(0,0,0,0.03); padding:10px 12px; border-radius:12px;">
+                                <div>
+                                    <div style="font-weight:700; color:var(--text-main);">${s.title}</div>
+                                    <div style="font-size:12px; color:var(--text-secondary);">${s.date}${s.note ? ' · ' + s.note : ''}</div>
+                                </div>
+                                <div style="font-weight:900; color:var(--text-main);">${fmtMoney(s.amount)}</div>
+                            </div>
+                        `).join('')}
+                    </div>
+                </div>
+
+                <div style="display:flex; gap:10px; justify-content:flex-end; flex-wrap:wrap;">
+                    <button class="btn btn-sm btn-secondary" type="button" id="btn-card-add-rec">记一笔</button>
+                    <button class="btn btn-sm btn-outline" type="button" id="btn-card-edit">编辑</button>
+                    <button class="btn btn-sm btn-danger-outline" type="button" id="btn-card-del">删除</button>
+                </div>
+            `;
+
+            const btnAddRec = document.getElementById('btn-card-add-rec');
+            if (btnAddRec) btnAddRec.onclick = () => {
+                activeRecordCardName = card.name;
+                recordsMode = 'detail';
+                setRoute('/records/add');
+            };
+            const btnEdit = document.getElementById('btn-card-edit');
+            if (btnEdit) btnEdit.onclick = () => setRoute(`/cards/edit?name=${encodeURIComponent(card.name)}`);
+            const btnDel = document.getElementById('btn-card-del');
+            if (btnDel) btnDel.onclick = () => delCard(idx);
         }
         
         // --- 记账与流水 ---
@@ -1001,22 +1384,36 @@ function populateRecCardFilter() {
             renderRecs({ records: recs, targetId: 'record-detail-list' });
         }
 
-        function refreshAllSummary() {
+        function refreshAllSummary(routeParams = new URLSearchParams()) {
             const stats = computeStats(appState.cards || [], appState.records || [], new Date(), periodOffset);
-            renderDashboard(stats);
-            renderRecCardsList(stats);
-            if (recordsMode === 'detail') {
+            const { path } = parseRoute();
+            const base = (path || '/home').split('/')[1] || 'home';
+
+            if (base === 'home') {
+                renderHomeView(stats);
+                const chartEl = document.getElementById('chartCard');
+                const chartBtn = document.getElementById('toggleChartBtn');
+                if (chartEl) chartEl.style.display = showChart ? 'block' : 'none';
+                if (chartBtn) chartBtn.textContent = showChart ? '收起趋势' : '查看趋势';
+                if (showChart) renderSpendChart();
+            } else if (base === 'records') {
+                renderRecCardsList(stats);
                 renderRecordsPage();
+            } else if (base === 'cards') {
+                renderCardsView(stats, routeParams);
+            } else if (base === 'presets') {
+                renderPresetList();
+                populatePresetSelect();
+            } else if (base === 'settings') {
+                populateLimitCardSelect();
+                renderLimitEvents();
             }
-            if (showChart) renderSpendChart();
-            populateLimitCardSelect();
-            renderLimitEvents();
         }
 
         function showRecordDetail(cardName) {
             activeRecordCardName = cardName;
             recordsMode = 'detail';
-            renderRecordsPage();
+            setRoute(`/records?name=${encodeURIComponent(cardName)}`);
         }
 
         function backToRecordSummary() {
@@ -1024,11 +1421,13 @@ function populateRecCardFilter() {
             activeRecordCardName = null;
             setRecordsMode('summary');
             renderRecCardsList();
+            setRoute('/records');
         }
 
         // --- 逻辑函数 ---
         async function doAddCard() {
             const name=id('c-name').value, limit=id('c-limit').value, bill=id('c-bill').value;
+            const due = (document.getElementById('c-due') || {}).value;
             const currentUsedVal = parseFloat(id('c-current-used').value || '0');
             const currentUsedPeriod = (document.getElementById('c-current-used-period') || {}).value || 'current';
             const tailNum = id('c-tail').value.trim();
@@ -1040,6 +1439,13 @@ function populateRecCardFilter() {
             if(!name) return showToast('请填写卡片名称', 'error');
             const billDay = ensureValidDay(bill, '账单日');
             if (billDay === null) return;
+            let dueDay = null;
+            if ((due || '').trim() !== '') {
+                dueDay = ensureValidDueDay(due, '到期还款日');
+                if (dueDay === null) return;
+            } else {
+                dueDay = ((billDay + 20 - 1) % 28) + 1;
+            }
             const limitVal = parseFloat(limit);
             if (Number.isNaN(limitVal)) return showToast('请填写额度', 'error');
             const targetUsageRate = Math.min(0.95, Math.max(0.01, (Number.isFinite(targetUsagePct) ? targetUsagePct : 65) / 100));
@@ -1052,10 +1458,18 @@ function populateRecCardFilter() {
             setButtonLoading(btn, true, '保存');
             
             try {
+                const isEdit = Number.isInteger(editingCardIndex) && editingCardIndex >= 0 && editingCardIndex < (appState.cards || []).length;
+                const existingIndex = (appState.cards || []).findIndex((c, i) => i !== editingCardIndex && c.name === name);
+                if (existingIndex >= 0) {
+                    showToast('卡片名称已存在，请换一个名称', 'error');
+                    return;
+                }
+
                 const newCard = {
                     name,
                     limit:limitVal,
                     billDay,
+                    dueDay,
                     currentUsed: Number.isNaN(currentUsedVal) ? 0 : currentUsedVal,
                     currentUsedPeriod,
                     targetUsageRate,
@@ -1067,12 +1481,17 @@ function populateRecCardFilter() {
                 if (tailNum) {
                     newCard.tailNum = tailNum;
                 }
-                appState.cards.push(newCard);
+                if (isEdit) {
+                    appState.cards[editingCardIndex] = { ...appState.cards[editingCardIndex], ...newCard };
+                } else {
+                    appState.cards.push(newCard);
+                }
                 await saveData();
                 populateRecCardFilter();
                 refreshAllSummary();
-                showToast('卡片添加成功', 'success');
-                nav('home');
+                showToast(isEdit ? '卡片已更新' : '卡片添加成功', 'success');
+                editingCardIndex = null;
+                setRoute(`/cards?name=${encodeURIComponent(name)}`);
             } catch (e) {
                 showToast('保存失败：' + (e.message || '未知错误'), 'error');
             } finally {
@@ -1348,75 +1767,78 @@ function populateRecCardFilter() {
         }
         
         // --- Routing & Events ---
-        function nav(p, opts = {}) {
-            const { fromHistory = false, replace = false } = opts;
-            p = normalizePage(p);
-            document.querySelectorAll('.tab-item').forEach(e=>e.classList.remove('active'));
-            switchPage(p, { fromHistory, replace });
-            if (p !== 'records') {
-                closeRecModal();
-                const detailFab = document.getElementById('fab-detail-add');
-                if (detailFab) detailFab.style.display = 'none';
-                const fab = document.getElementById('fab-add-record');
-                if (fab) fab.style.display = 'none';
-            }
-            if(p==='home') refreshAllSummary();
-            if(p==='records') {
-                recordsMode = recordsMode || 'summary';
-                if (!activeRecordCardName) recordsMode = 'summary';
-                renderRecordsPage();
-            }
-            if(p==='add-card') {
-                id('c-name').value=''; id('c-limit').value=''; id('c-bill').value=''; id('c-tail').value=''; id('c-current-used').value='';
-                const tUsage = document.getElementById('c-target-usage');
-                const tMin = document.getElementById('c-tx-min');
-                const tMax = document.getElementById('c-tx-max');
-                const tInterval = document.getElementById('c-min-interval');
-                const tShare = document.getElementById('c-merchant-max-share');
-                if (tUsage) tUsage.value = '65';
-                if (tMin) tMin.value = '13';
-                if (tMax) tMax.value = '18';
-                if (tInterval) tInterval.value = '1';
-                if (tShare) tShare.value = '25';
-            }
-            if(p==='add-rec') { 
-                id('r-date').value = new Date().toISOString().split('T')[0];
-                id('r-amt').value=''; id('r-fee').value='';
-                let opts=''; (appState.cards||[]).forEach((c,i)=>opts+=`<option value="${i}">${c.name}</option>`);
-                id('r-card').innerHTML = opts;
-                populatePresetSelect();
-                // 默认选择“消费”
-                const expenseRadio = document.querySelector('input[name="r-type"][value="消费"]');
-                if (expenseRadio) expenseRadio.checked = true;
-                document.querySelectorAll('input[name="r-type"]').forEach(r => {
-                    r.onchange = updateRecFormByType;
-                });
-                // 如果从明细进入，默认选中当前卡片
-                if (activeRecordCardName) {
-                    const idx = (appState.cards||[]).findIndex(c => c.name === activeRecordCardName);
-                    if (idx >= 0) id('r-card').value = String(idx);
-                }
-                const channelSel = document.getElementById('r-channel');
-                if (channelSel) channelSel.value = '刷卡';
-                const sceneSel = document.getElementById('r-scene');
-                if (sceneSel) sceneSel.value = '';
-                populateRefundSources();
-                updateRecFormByType();
-            }
-            const tab = document.querySelector(`.tab-item[data-page="${p}"]`);
-            if (tab) tab.classList.add('active');
-            const newHash = '#'+p;
-            if (!fromHistory && location.hash !== newHash) {
-                const method = replace ? 'replaceState' : 'pushState';
-                history[method]({ page: p }, '', newHash);
-            }
+        function nav(p) {
+            const key = normalizePage(p);
+            if (key === 'add-card') return setRoute('/cards/new');
+            if (key === 'add-rec') return setRoute('/records/add');
+            return setRoute('/' + key);
         }
-        function showAddRecord() { nav('add-rec'); }
-        function showAddCard() { nav('add-card'); }
+        function showAddRecord() { setRoute('/records/add'); }
+        function showAddCard() { setRoute('/cards/new'); }
         function openRecsForCard(cardName){
             activeRecordCardName = cardName;
             recordsMode = 'detail';
-            nav('records');
+            setRoute(`/records?name=${encodeURIComponent(cardName)}`);
+        }
+
+        function prepareAddCardForm({ mode = 'new', cardName = '' } = {}) {
+            const cards = appState.cards || [];
+            const isEdit = mode === 'edit' && cardName;
+            editingCardIndex = isEdit ? cards.findIndex(c => c.name === cardName) : null;
+
+            const setVal = (id, v) => { const el = document.getElementById(id); if (el) el.value = v; };
+            if (!isEdit || editingCardIndex == null || editingCardIndex < 0) {
+                setVal('c-name', '');
+                setVal('c-limit', '');
+                setVal('c-bill', '');
+                setVal('c-due', '10');
+                setVal('c-tail', '');
+                setVal('c-current-used', '');
+                setVal('c-current-used-period', 'current');
+                setVal('c-target-usage', '65');
+                setVal('c-tx-min', '13');
+                setVal('c-tx-max', '18');
+                setVal('c-min-interval', '1');
+                setVal('c-merchant-max-share', '25');
+                return;
+            }
+            const c = cards[editingCardIndex];
+            setVal('c-name', c.name || '');
+            setVal('c-limit', String(c.limit ?? ''));
+            setVal('c-bill', String(c.billDay ?? ''));
+            setVal('c-due', String(c.dueDay ?? ''));
+            setVal('c-tail', c.tailNum || '');
+            setVal('c-current-used', String(c.currentUsed ?? 0));
+            setVal('c-current-used-period', c.currentUsedPeriod || 'current');
+            setVal('c-target-usage', String(Math.round(((c.targetUsageRate ?? 0.65) * 100))));
+            setVal('c-tx-min', String(c.targetTxMin ?? 13));
+            setVal('c-tx-max', String(c.targetTxMax ?? 18));
+            setVal('c-min-interval', String(c.minIntervalDays ?? 1));
+            setVal('c-merchant-max-share', String(Math.round(((c.merchantMaxShare ?? 0.25) * 100))));
+        }
+
+        function prepareAddRecForm({ cardName = '' } = {}) {
+            id('r-date').value = new Date().toISOString().split('T')[0];
+            id('r-amt').value = '';
+            id('r-fee').value = '';
+            let opts = '';
+            (appState.cards || []).forEach((c, i) => opts += `<option value="${i}">${c.name}</option>`);
+            id('r-card').innerHTML = opts;
+            populatePresetSelect();
+            const expenseRadio = document.querySelector('input[name="r-type"][value="消费"]');
+            if (expenseRadio) expenseRadio.checked = true;
+            document.querySelectorAll('input[name="r-type"]').forEach(r => { r.onchange = updateRecFormByType; });
+            const chosen = cardName || activeRecordCardName;
+            if (chosen) {
+                const idx = (appState.cards || []).findIndex(c => c.name === chosen);
+                if (idx >= 0) id('r-card').value = String(idx);
+            }
+            const channelSel = document.getElementById('r-channel');
+            if (channelSel) channelSel.value = '刷卡';
+            const sceneSel = document.getElementById('r-scene');
+            if (sceneSel) sceneSel.value = '';
+            populateRefundSources();
+            updateRecFormByType();
         }
 
         function bindDomEvents() {
@@ -1438,6 +1860,7 @@ function populateRecCardFilter() {
             on('btn-add-rec', 'click', doAddRec);
             on('home-add-card-btn', 'click', showAddCard);
             on('records-add-card-btn', 'click', showAddCard);
+            on('cards-add-card-btn', 'click', showAddCard);
             on('dark-switch', 'change', toggleDark);
             on('period-offset', 'change', (e) => {
                 periodOffset = Number(e.target.value) || 0;
@@ -1449,7 +1872,8 @@ function populateRecCardFilter() {
             document.querySelectorAll('.tab-item[data-page]').forEach(el => {
                 el.addEventListener('click', () => {
                     const page = el.dataset.page;
-                    if (page === 'add-card') showAddCard(); else nav(page);
+                    if (!page) return;
+                    setRoute('/' + page);
                 });
             });
             document.querySelectorAll('.rec-modal-backdrop, .rec-modal-close').forEach(el => {
@@ -1524,12 +1948,11 @@ function populateRecCardFilter() {
             } 
         }
 
-        const validPages = new Set(['home','records','settings','add-card','add-rec']);
+        const validPages = new Set(['home','records','cards','presets','settings','add-card','add-rec']);
         function normalizePage(p) {
             return validPages.has(p) ? p : 'home';
         }
         function switchPage(p, opts = {}) {
-            const { fromHistory = false, replace = false } = opts;
             const targetId = 'page-' + p;
             const current = document.querySelector('.page.active');
             const next = document.getElementById(targetId);
@@ -1549,12 +1972,6 @@ function populateRecCardFilter() {
             requestAnimationFrame(() => {
                 next.classList.add('active');
             });
-
-            const newHash = '#' + p;
-            if (!fromHistory && location.hash !== newHash) {
-                const method = replace ? 'replaceState' : 'pushState';
-                history[method]({ page: p }, '', newHash);
-            }
         }
 
         // --- 登录与认证 ---
@@ -1660,18 +2077,117 @@ function populateRecCardFilter() {
             return true;
         }
 
-        // --- 初始化 ---
-        function handlePopState() {
-            const pageFromHash = normalizePage((location.hash || '').replace('#','') || 'home');
-            nav(pageFromHash, { fromHistory: true, replace: true });
+        function getScrollContainer() {
+            const mc = document.querySelector('.main-content');
+            if (!mc) return window;
+            const style = getComputedStyle(mc);
+            if (style.overflowY === 'auto' || style.overflowY === 'scroll') return mc;
+            return window;
         }
-        window.addEventListener('popstate', handlePopState);
+
+        function getScrollTop() {
+            const c = getScrollContainer();
+            if (c === window) return window.scrollY || document.documentElement.scrollTop || 0;
+            return c.scrollTop || 0;
+        }
+
+        function setScrollTop(top) {
+            const c = getScrollContainer();
+            if (c === window) window.scrollTo(0, top);
+            else c.scrollTop = top;
+        }
+
+        function saveScrollForRoute(path) {
+            if (!path) return;
+            if (path !== '/records') return;
+            scrollPosByRoute[path] = getScrollTop();
+        }
+
+        function restoreScrollForRoute(path) {
+            if (!path) return;
+            if (path !== '/records') return;
+            const top = scrollPosByRoute[path] || 0;
+            setTimeout(() => setScrollTop(top), 0);
+        }
+
+        function syncNavActive(routePath) {
+            const base = (routePath || '/home').split('/')[1] || 'home';
+            document.querySelectorAll('.tab-item[data-page]').forEach(e => e.classList.remove('active'));
+            const tab = document.querySelector(`.tab-item[data-page="${base}"]`);
+            if (tab) tab.classList.add('active');
+        }
+
+        function syncViewToRoute() {
+            const { path, params } = parseRoute();
+            const routePath = path || '/home';
+
+            // scroll save/restore
+            if (window.__currentRoutePath && window.__currentRoutePath !== routePath) {
+                saveScrollForRoute(window.__currentRoutePath);
+            }
+            window.__currentRoutePath = routePath;
+
+            // sub-routes
+            if (routePath === '/cards/new') {
+                switchPage('add-card');
+                prepareAddCardForm({ mode: 'new' });
+                syncNavActive('/cards');
+                return;
+            }
+            if (routePath === '/cards/edit') {
+                switchPage('add-card');
+                prepareAddCardForm({ mode: 'edit', cardName: params.get('name') || '' });
+                syncNavActive('/cards');
+                return;
+            }
+            if (routePath === '/records/add') {
+                switchPage('add-rec');
+                prepareAddRecForm({ cardName: params.get('card') || '' });
+                syncNavActive('/records');
+                return;
+            }
+
+            // top-level
+            const base = routePath.split('/')[1] || 'home';
+            const pageKey = normalizePage(base);
+            if (pageKey === 'records') {
+                const name = params.get('name') || '';
+                if (name) {
+                    activeRecordCardName = decodeURIComponent(name);
+                    recordsMode = 'detail';
+                } else {
+                    recordsMode = 'summary';
+                    activeRecordCardName = null;
+                }
+            }
+            switchPage(pageKey);
+            syncNavActive(routePath);
+
+            refreshAllSummary(params);
+            restoreScrollForRoute(routePath);
+        }
+
+        // --- 初始化 ---
         bindDomEvents();
+        window.addEventListener('hashchange', () => syncViewToRoute());
 
         initAuth().then((loggedIn) => {
             if (!loggedIn) return;
-            const initialPage = normalizePage((location.hash || '').replace('#','') || 'home');
-            nav(initialPage, { replace: true });
+            initDensity();
+            // self-tests (optional): open with ?selftest=1
+            try {
+                const url = new URL(location.href);
+                if (url.searchParams.get('selftest') === '1') {
+                    const results = selfTestRepaymentStrategy();
+                    const bad = results.filter(r => !r.ok);
+                    console.groupCollapsed(`[selftest] repaymentStrategy: ${results.length - bad.length}/${results.length} passed`);
+                    results.forEach(r => console.log(r.name, r.ok ? 'OK' : 'FAIL', r.out));
+                    console.groupEnd();
+                    if (bad.length) showToast(`自测失败：${bad.map(b=>b.name).join('、')}`, 'error');
+                }
+            } catch (e) {}
+            if (!location.hash || location.hash === '#') setRoute('/home');
+            syncViewToRoute();
             const tabBar = document.getElementById('tab-bar');
             if (tabBar) tabBar.style.display = 'flex';
             document.body.style.overflow = '';

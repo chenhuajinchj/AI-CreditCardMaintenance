@@ -139,12 +139,60 @@ body.dark .nav-bar { border-top-color: rgba(255,255,255,0.1); }
 
 /* 页面容器 */
 .page {
+    display: none;
     padding: 20px 16px 100px; /* 底部留白给导航栏 */
     max-width: 600px; /* 手机端限制宽度 */
     margin: 0 auto;
     animation: fadeIn 0.3s ease;
 }
+.page.active { display: block; }
 .card-grid { display: grid; grid-template-columns: 1fr; gap: 16px; }
+.kpi-grid {
+    display: grid;
+    grid-template-columns: repeat(2, minmax(0, 1fr));
+    gap: 12px;
+    margin-bottom: 16px;
+}
+.kpi-item {
+    background: var(--bg-card);
+    border-radius: var(--radius-lg);
+    padding: 14px 16px;
+    border: 1px solid rgba(255,255,255,0.4);
+    backdrop-filter: var(--blur);
+    -webkit-backdrop-filter: var(--blur);
+    box-shadow: var(--shadow-sm);
+}
+body.dark .kpi-item { border-color: rgba(255,255,255,0.08); }
+.kpi-label { font-size: 12px; color: var(--text-secondary); margin-bottom: 6px; }
+.kpi-value { font-size: 20px; font-weight: 800; letter-spacing: -0.3px; }
+.kpi-sub { font-size: 12px; color: var(--text-secondary); margin-top: 4px; }
+
+.compact-card { padding: 18px; }
+
+.card-row-list { display: flex; flex-direction: column; gap: 10px; }
+.card-row {
+    display: grid;
+    grid-template-columns: 1.2fr 0.8fr;
+    gap: 10px;
+    padding: 12px 12px;
+    border-radius: var(--radius-md);
+    background: rgba(0,0,0,0.03);
+    cursor: pointer;
+    transition: transform 0.15s ease, background 0.15s ease;
+}
+body.dark .card-row { background: rgba(255,255,255,0.08); }
+.card-row:hover { background: rgba(0,0,0,0.06); transform: translateY(-1px); }
+body.dark .card-row:hover { background: rgba(255,255,255,0.12); }
+.card-row-title { font-weight: 700; }
+.card-row-sub { font-size: 12px; color: var(--text-secondary); margin-top: 2px; }
+.card-row-metrics { text-align: right; font-variant-numeric: tabular-nums; }
+.card-row-metrics .big { font-size: 16px; font-weight: 800; }
+.card-row-metrics .small { font-size: 12px; color: var(--text-secondary); margin-top: 2px; }
+
+/* 密度模式 */
+body.density-comfort .kpi-item { padding: 18px 18px; }
+body.density-comfort .card-row { padding: 14px 14px; }
+body.density-comfort .compact-card { padding: 22px; }
 
 /* Legacy helpers used by app.js */
 .icon { width: 20px; height: 20px; display: inline-block; vertical-align: middle; color: currentColor; }
@@ -305,6 +353,11 @@ body.dark .suggest-pill { background: rgba(10,132,255,0.15); }
         display: grid;
         grid-template-columns: repeat(auto-fill, minmax(340px, 1fr));
         gap: 24px;
+    }
+
+    .kpi-grid {
+        grid-template-columns: repeat(4, minmax(0, 1fr));
+        gap: 16px;
     }
     
     /* 首页大图表区域 */
