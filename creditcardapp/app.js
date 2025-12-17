@@ -981,6 +981,9 @@ function populateRecCardFilter() {
             const dueDay = Number.isInteger(card.dueDay) ? card.dueDay : (((card.billDay || 1) + 20 - 1) % 28) + 1;
             const plan = computeRepaymentStrategy({ billDay: card.billDay, dueDay, today, currentUsed: used, limit: card.limit });
             const stages = plan?.recommendedPlan?.stages || [];
+            const limitOpen = getLimitPanelOpen(card.name);
+            const limitSummary = getLimitSummary(card.name);
+            const todayStr = getLocalDateString();
 
             detailEl.innerHTML = `
                 <div style="display:flex; justify-content:space-between; align-items:flex-start; gap:12px; margin-bottom:14px;">
@@ -1033,6 +1036,36 @@ function populateRecCardFilter() {
                     </div>
                 </div>
 
+                <div class="dashboard-card" style="padding:12px; margin-bottom:16px;">
+                    <div id="limit-toggle" style="display:flex; justify-content:space-between; align-items:center; cursor:pointer; gap:8px;">
+                        <div>
+                            <div style="font-weight:800;">额度变化</div>
+                            <div id="limit-summary-text" style="font-size:12px; color:var(--text-secondary); margin-top:2px;">${limitSummary}</div>
+                        </div>
+                        <svg id="limit-arrow" width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" style="transition:transform 0.2s ease; ${limitOpen ? 'transform: rotate(90deg);' : ''}">
+                            <polyline points="9 18 15 12 9 6"></polyline>
+                        </svg>
+                    </div>
+                    <div id="limit-body" style="margin-top:12px; ${limitOpen ? '' : 'display:none;'}">
+                        <div class="form-grid">
+                            <input type="date" id="l-date" value="${todayStr}">
+                            <select id="l-type">
+                                <option value="固额">固额</option>
+                                <option value="临额">临额</option>
+                            </select>
+                            <div class="row-inputs">
+                                <input type="number" id="l-before" placeholder="原额度">
+                                <input type="number" id="l-after" placeholder="新额度">
+                            </div>
+                        </div>
+                        <input type="text" id="l-note" placeholder="备注（选填）">
+                        <div style="display:flex; justify-content:flex-end; margin:10px 0 12px;">
+                            <button class="btn btn-outline" id="btn-add-limit-event" type="button">添加记录</button>
+                        </div>
+                        <div id="limit-event-list" class="list-stack"></div>
+                    </div>
+                </div>
+
                 <div style="display:flex; gap:10px; justify-content:flex-end; flex-wrap:wrap;">
                     <button class="btn btn-sm btn-secondary" type="button" id="btn-card-add-rec">记一笔</button>
                     <button class="btn btn-sm btn-outline" type="button" id="btn-card-edit">编辑</button>
@@ -1050,6 +1083,24 @@ function populateRecCardFilter() {
             if (btnEdit) btnEdit.onclick = () => setRoute(`/cards/edit?name=${encodeURIComponent(card.name)}`);
             const btnDel = document.getElementById('btn-card-del');
             if (btnDel) btnDel.onclick = () => delCard(idx);
+            const limitToggle = document.getElementById('limit-toggle');
+            const limitBody = document.getElementById('limit-body');
+            const limitArrow = document.getElementById('limit-arrow');
+            const updateOpen = (open) => {
+                if (limitBody) limitBody.style.display = open ? 'block' : 'none';
+                if (limitArrow) limitArrow.style.transform = open ? 'rotate(90deg)' : 'rotate(0deg)';
+                setLimitPanelOpen(card.name, open);
+            };
+            updateOpen(limitOpen);
+            if (limitToggle) {
+                limitToggle.onclick = () => {
+                    const open = limitBody?.style.display !== 'none';
+                    updateOpen(!open);
+                };
+            }
+            const btnAddLimit = document.getElementById('btn-add-limit-event');
+            if (btnAddLimit) btnAddLimit.onclick = () => addLimitEvent(card.name);
+            renderLimitEvents(card.name, { updateSummary: false });
         }
         
         // --- 记账与流水 ---
@@ -1404,9 +1455,6 @@ function populateRecCardFilter() {
             } else if (base === 'presets') {
                 renderPresetList();
                 populatePresetSelect();
-            } else if (base === 'settings') {
-                populateLimitCardSelect();
-                renderLimitEvents();
             }
         }
 
@@ -1641,19 +1689,51 @@ function populateRecCardFilter() {
         }
 
         // --- 额度变化记录 ---
-        function populateLimitCardSelect() {
-            const sel = document.getElementById('l-card');
-            if (!sel) return;
-            const opts = (appState.cards || []).map((c, i) => `<option value="${i}">${c.name}</option>`);
-            sel.innerHTML = opts.join('');
+        const limitPanelKey = (cardName) => `limit-panel-${cardName || 'unknown'}`;
+
+        function getLimitPanelOpen(cardName) {
+            try {
+                return localStorage.getItem(limitPanelKey(cardName)) === '1';
+            } catch (e) {
+                return false;
+            }
         }
 
-        function renderLimitEvents() {
+        function setLimitPanelOpen(cardName, open) {
+            try {
+                localStorage.setItem(limitPanelKey(cardName), open ? '1' : '0');
+            } catch (e) {}
+        }
+
+        function getLimitEventsForCard(cardName) {
+            return (appState.limitEvents || [])
+                .filter(e => e.cardName === cardName)
+                .slice()
+                .sort((a,b)=> (b.ts||0)-(a.ts||0));
+        }
+
+        function getLimitSummary(cardName) {
+            const events = getLimitEventsForCard(cardName);
+            if (!events.length) return '暂无记录';
+            const latest = events[0];
+            const after = Number(latest.after) || 0;
+            return `${latest.date} · 新额度 ¥${after.toLocaleString()}`;
+        }
+
+        function renderLimitEvents(cardName, { updateSummary = false } = {}) {
             const list = document.getElementById('limit-event-list');
+            if (!cardName) {
+                if (list) list.innerHTML = '<p style="font-size:12px; color:var(--sub-text);">请选择卡片</p>';
+                return;
+            }
             if (!list) return;
-            const events = (appState.limitEvents || []).slice().sort((a,b)=> (b.ts||0)-(a.ts||0));
+            const events = getLimitEventsForCard(cardName);
             if (!events.length) {
                 list.innerHTML = '<p style="font-size:12px; color:var(--sub-text);">暂无记录</p>';
+                if (updateSummary) {
+                    const summaryEl = document.getElementById('limit-summary-text');
+                    if (summaryEl) summaryEl.textContent = '暂无记录';
+                }
                 return;
             }
             let html = '';
@@ -1674,15 +1754,17 @@ function populateRecCardFilter() {
             });
             list.innerHTML = html;
             list.querySelectorAll('.limit-del-btn').forEach(btn => {
-                btn.addEventListener('click', () => delLimitEvent(btn.dataset.limitId));
+                btn.addEventListener('click', () => delLimitEvent(btn.dataset.limitId, cardName));
             });
+            if (updateSummary) {
+                const summaryEl = document.getElementById('limit-summary-text');
+                if (summaryEl) summaryEl.textContent = getLimitSummary(cardName);
+            }
         }
 
-        async function addLimitEvent() {
+        async function addLimitEvent(cardName) {
             ensureLimitEventsDefaults();
-            const cardIdx = parseInt((document.getElementById('l-card') || {}).value || '0', 10);
-            const card = (appState.cards || [])[cardIdx];
-            if (!card) return showToast('请先添加卡片', 'error');
+            if (!cardName) return showToast('请先选择卡片', 'error');
             const date = (document.getElementById('l-date') || {}).value;
             const dateRes = normalizeDateInput(date);
             if (dateRes.error) return showToast(dateRes.error, 'error');
@@ -1693,7 +1775,7 @@ function populateRecCardFilter() {
             const note = ((document.getElementById('l-note') || {}).value || '').trim();
             const ev = {
                 id: genId(),
-                cardName: card.name,
+                cardName,
                 date: dateRes.value,
                 type,
                 before,
@@ -1703,16 +1785,16 @@ function populateRecCardFilter() {
             };
             appState.limitEvents.unshift(ev);
             await saveData();
-            renderLimitEvents();
+            renderLimitEvents(cardName, { updateSummary: true });
             showToast('额度记录已添加', 'success');
         }
 
-        async function delLimitEvent(idVal) {
+        async function delLimitEvent(idVal, cardName) {
             if (!idVal) return;
             if (!confirm('确定删除该额度记录？')) return;
             appState.limitEvents = (appState.limitEvents || []).filter(e => e.id !== idVal);
             await saveData();
-            renderLimitEvents();
+            renderLimitEvents(cardName, { updateSummary: true });
         }
 
         async function addFeePreset() {
@@ -1855,7 +1937,6 @@ function populateRecCardFilter() {
             on('btn-clear', 'click', clearData);
             on('btn-logout', 'click', handleLogout);
             on('btn-add-preset', 'click', addFeePreset);
-            on('btn-add-limit-event', 'click', addLimitEvent);
             on('btn-add-card', 'click', doAddCard);
             on('btn-add-rec', 'click', doAddRec);
             on('home-add-card-btn', 'click', showAddCard);
