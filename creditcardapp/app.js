@@ -366,7 +366,7 @@ function populateRecCardFilter() {
 
             const isDark = document.body.classList.contains('dark');
             const textColor = isDark ? '#E5E7EB' : '#4B5563';
-            const gridColor = isDark ? 'rgba(148,163,184,0.35)' : 'rgba(148,163,184,0.4)';
+            const gridColor = isDark ? 'rgba(255,255,255,0.05)' : 'rgba(0,0,0,0.05)';
             const borderColor = '#3B82F6';
             const bgColor = 'rgba(59,130,246,0.12)';
 
@@ -622,7 +622,7 @@ function populateRecCardFilter() {
                 </div>
             `;
             const summaryHtml = `
-                <div class="summary-card">
+                <div class="dashboard-card summary-card">
                     <div class="summary-title">${iconWallet} 总资产概览</div>
                     <div class="summary-grid">
                         <div class="summary-item">

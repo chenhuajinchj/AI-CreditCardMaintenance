@@ -2,226 +2,407 @@
 <html lang="zh-CN">
 <head>
     <meta charset="UTF-8">
-    <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no">
-    <title>信用卡智囊 (V6.8 仪表盘)</title>
+    <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no, viewport-fit=cover">
+    <title>信用卡智囊 (7)</title>
     <link rel="manifest" href="manifest.json">
-<link rel="apple-touch-icon" href="icon.png">
-<meta name="apple-mobile-web-app-capable" content="yes">
-<meta name="apple-mobile-web-app-status-bar-style" content="black-translucent">
-    <!-- 图表库：Chart.js -->
+    <link rel="apple-touch-icon" href="icon.png">
+    <meta name="apple-mobile-web-app-capable" content="yes">
+    <meta name="apple-mobile-web-app-status-bar-style" content="black-translucent">
+    <meta name="theme-color" content="#F2F2F7" media="(prefers-color-scheme: light)">
+    <meta name="theme-color" content="#000000" media="(prefers-color-scheme: dark)">
+    
+    <link rel="preconnect" href="https://fonts.googleapis.com">
+    <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+    <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700&display=swap" rel="stylesheet">
+
     <script src="https://cdn.jsdelivr.net/npm/chart.js"></script>
-    <!-- Supabase SDK -->
     <script src="https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2"></script>
     <link rel="stylesheet" href="./styles.css">
 </head>
 <body>
 
-    <!-- Toast 容器 -->
     <div class="toast-container" id="toast-container"></div>
 
-    <div id="page-auth">
+    <div id="page-auth" class="hidden">
         <div class="auth-card">
+            <div class="auth-logo-area">
+                <div class="auth-icon-bg">¥</div>
+            </div>
             <div class="auth-title">信用卡智囊</div>
-            <div class="auth-subtitle">登录以同步您的卡片与流水数据</div>
-            <label>邮箱</label>
-            <input type="email" id="login-email" placeholder="you@example.com">
-            <label>密码</label>
-            <input type="password" id="login-password" placeholder="至少 6 位">
+            <div class="auth-subtitle">智能管理您的信用资产</div>
+            
+            <div class="input-group">
+                <label>邮箱</label>
+                <input type="email" id="login-email" placeholder="you@example.com">
+            </div>
+            <div class="input-group">
+                <label>密码</label>
+                <input type="password" id="login-password" placeholder="••••••">
+            </div>
+            
             <div class="auth-actions">
-                <button id="btn-login" class="btn btn-outline" style="width:50%;">登录</button>
-                <button id="btn-register" class="btn" style="width:50%;">注册</button>
+                <button id="btn-login" class="btn">登录</button>
+                <button id="btn-register" class="btn btn-ghost">注册账号</button>
             </div>
         </div>
     </div>
 
-
-    <div id="page-home" class="page container">
-        <h2 style="margin-bottom:20px;">资产概览</h2>
-        <div style="display:flex;justify-content:space-between;align-items:center;margin:8px 0;">
-            <button class="btn" id="home-add-card-btn">新增卡片</button>
-            <button class="btn" id="toggleChartBtn">查看趋势</button>
-        </div>
-        <div id="chartCard" style="display:none;">
-            <div class="dashboard-card chart-card">
-                <canvas id="spendChart"></canvas>
+    <div class="app-layout">
+        
+        <nav class="nav-bar" id="tab-bar" style="display:none;">
+            <div class="nav-brand">
+                <div class="brand-logo">AI</div>
+                <span class="brand-text">CreditMaster</span>
             </div>
-        </div>
-        <div id="card-dashboard"></div>
-        <div style="height:50px;"></div> </div>
 
-    <div id="page-records" class="page container">
-        <h2>账单流水</h2>
-        <div style="margin:8px 0; display:flex; gap:10px; align-items:center;">
-            <label style="font-size:13px; color:var(--sub-text);">账单期</label>
-            <select id="period-offset" style="flex:0 0 160px;">
-                <option value="0">本期</option>
-                <option value="1">上一期</option>
-                <option value="2">上上期</option>
-            </select>
-        </div>
-        <div id="records-summary-view">
-            <div style="display:flex; justify-content:flex-end; margin-bottom:10px;">
-                <button class="btn" id="records-add-card-btn">新增卡片</button>
-            </div>
-            <div id="rec-card-list"></div>
-        </div>
-    <div id="records-detail-view" style="display:none;">
-        <div class="dashboard-card" style="margin-bottom:12px;">
-            <div style="display:flex; align-items:center; justify-content:space-between;">
-                <div>
-                    <div style="font-weight:700;" id="record-detail-title"></div>
-                    <div style="font-size:12px; color:var(--sub-text);">账期内流水（倒序）</div>
+            <div class="nav-links">
+                <div class="tab-item active" data-page="home">
+                    <svg class="tab-icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+                        <rect x="3" y="3" width="7" height="9"></rect>
+                        <rect x="14" y="3" width="7" height="5"></rect>
+                        <rect x="14" y="12" width="7" height="9"></rect>
+                        <rect x="3" y="16" width="7" height="5"></rect>
+                    </svg>
+                    <span>概览</span>
                 </div>
-                <button class="btn btn-outline" id="btn-record-back" style="width:auto; padding:8px 12px;">返回</button>
+                <div class="tab-item" data-page="add-card">
+                    <svg class="tab-icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+                        <rect x="2" y="5" width="20" height="14" rx="2" />
+                        <line x1="2" y1="10" x2="22" y2="10" />
+                    </svg>
+                    <span>办卡</span>
+                </div>
+                <div class="tab-item" data-page="records">
+                    <svg class="tab-icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+                        <path d="M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8z"></path>
+                        <polyline points="14 2 14 8 20 8"></polyline>
+                        <line x1="16" y1="13" x2="8" y2="13"></line>
+                        <line x1="16" y1="17" x2="8" y2="17"></line>
+                        <polyline points="10 9 9 9 8 9"></polyline>
+                    </svg>
+                    <span>流水</span>
+                </div>
+                <div class="tab-item" data-page="settings">
+                    <svg class="tab-icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+                        <circle cx="12" cy="12" r="3"></circle>
+                        <path d="M19.4 15a1.65 1.65 0 0 0 .33 1.82l.06.06a2 2 0 0 1 0 2.83 2 2 0 0 1-2.83 0l-.06-.06a1.65 1.65 0 0 0-1.82-.33 1.65 1.65 0 0 0-1 1.51V21a2 2 0 0 1-2 2 2 2 0 0 1-2-2v-.09A1.65 1.65 0 0 0 9 19.4a1.65 1.65 0 0 0-1.82.33l-.06.06a2 2 0 0 1-2.83 0 2 2 0 0 1 0-2.83l.06-.06a1.65 1.65 0 0 0 .33-1.82 1.65 1.65 0 0 0-1.51-1H3a2 2 0 0 1-2-2 2 2 0 0 1 2-2h.09A1.65 1.65 0 0 0 4.6 9a1.65 1.65 0 0 0-.33-1.82l-.06-.06a2 2 0 0 1 0-2.83 2 2 0 0 1 2.83 0l.06.06a1.65 1.65 0 0 0 1.82.33H9a1.65 1.65 0 0 0 1-1.51V3a2 2 0 0 1 2-2 2 2 0 0 1 2 2v.09a1.65 1.65 0 0 0 1 1.51 1.65 1.65 0 0 0 1.82-.33l.06-.06a2 2 0 0 1 2.83 0 2 2 0 0 1 0 2.83l-.06.06a1.65 1.65 0 0 0-.33 1.82V9a1.65 1.65 0 0 0 1.51 1H21a2 2 0 0 1 2 2 2 2 0 0 1-2 2h-.09a1.65 1.65 0 0 0-1.51 1z"></path>
+                    </svg>
+                    <span>设置</span>
+                </div>
             </div>
-        </div>
-        <div id="record-detail-list"></div>
-        <div class="fab-detail" id="fab-detail-add">+</div>
-    </div>
-        <div class="fab" id="fab-add-record">
-            <svg class="icon icon-24" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round">
-                <path d="M12 5v14M5 12h14" />
-            </svg>
-        </div>
-    </div>
 
-    <div id="page-settings" class="page container">
-        <h2>设置</h2>
-        <div class="dashboard-card">
-            <div style="display:flex; justify-content:space-between; align-items:center;">
-                <span>深色模式</span>
-                <input type="checkbox" id="dark-switch" style="width:auto; transform:scale(1.5);">
-            </div>
-            <hr style="border:0; border-top:1px solid #eee; margin:15px 0; opacity:0.1;">
-            <button id="btn-export" class="btn btn-outline">备份数据</button>
-            <button id="btn-clear" class="btn btn-danger">清空重置</button>
-            <button id="btn-logout" class="btn btn-outline" style="margin-top:12px;">退出登录</button>
-            <div style="margin-top:18px;">
-                <div style="font-weight:600; margin-bottom:8px;">费率预设</div>
-                <input type="text" id="preset-name" placeholder="预设名称（如 某平台）">
-                <input type="text" id="preset-merchant" placeholder="商户名称">
-                <input type="number" id="preset-rate" placeholder="费率%" step="0.01">
-                <button class="btn btn-outline" id="btn-add-preset">新增预设</button>
-                <div id="preset-list" style="margin-top:10px;"></div>
-            </div>
-            <hr style="border:0; border-top:1px solid #eee; margin:16px 0; opacity:0.1;">
-            <div style="margin-top:10px;">
-                <div style="font-weight:600; margin-bottom:8px;">额度变化记录</div>
-                <label>选择卡片</label>
-                <select id="l-card"></select>
-                <label>日期</label>
-                <input type="date" id="l-date">
-                <label>类型</label>
-                <select id="l-type">
-                    <option value="固额">固额</option>
-                    <option value="临额">临额</option>
-                </select>
-                <div style="display:flex; gap:10px;">
-                    <div style="flex:1">
-                        <label>原额度</label>
-                        <input type="number" id="l-before" placeholder="50000">
+            <button class="desktop-add-btn" id="desktop-add-rec" onclick="showAddRecord()">
+                <span>+</span> 记一笔
+            </button>
+        </nav>
+
+        <main class="main-content">
+            
+            <div id="page-home" class="page container">
+                <header class="page-header">
+                    <h2>资产概览</h2>
+                    <div class="header-actions">
+                        <button class="btn btn-sm btn-secondary" id="home-add-card-btn">新增卡片</button>
+                        <button class="btn btn-sm btn-secondary" id="toggleChartBtn">查看趋势</button>
                     </div>
-                    <div style="flex:1">
-                        <label>新额度</label>
-                        <input type="number" id="l-after" placeholder="60000">
+                </header>
+                
+                <div id="chartCard" style="display:none; margin-bottom: 20px;">
+                    <div class="dashboard-card chart-card">
+                        <canvas id="spendChart"></canvas>
                     </div>
                 </div>
-                <label>备注（选填）</label>
-                <input type="text" id="l-note" placeholder="例如：活动提额/系统自动">
-                <button class="btn btn-outline" id="btn-add-limit-event">添加记录</button>
-                <div id="limit-event-list" style="margin-top:10px;"></div>
-            </div>
-            <div class="sync-status-mini" id="sync-status-mini">
-                <span class="sync-status-mini-dot" id="sync-status-mini-dot"></span>
-                <span id="sync-status-mini-text">已连接</span>
-            </div>
-        </div>
-    </div>
 
-	    <div id="page-add-card" class="page container">
-	        <h2>新卡片</h2>
-	        <div class="dashboard-card">
-	            <label>名称</label><input type="text" id="c-name" placeholder="例如：招商Young">
-	            <label>额度</label><input type="number" id="c-limit" placeholder="50000">
-	            <label>账单日</label><input type="number" id="c-bill" placeholder="每月几号出账">
-	            <label>当前已用额度/欠款</label><input type="number" id="c-current-used" placeholder="0">
-	            <label>已用额度归属账期</label>
-	            <select id="c-current-used-period">
-	                <option value="current" selected>当前账单期</option>
-	                <option value="previous">上一账单期</option>
-	            </select>
-	            <hr style="border:0; border-top:1px solid #eee; margin:16px 0; opacity:0.1;">
-	            <div style="font-weight:600; margin-bottom:8px;">养卡策略（可改）</div>
-	            <label>目标使用率%</label><input type="number" id="c-target-usage" placeholder="65" value="65" min="1" max="95" step="1">
-	            <label>目标笔数（本期消费）</label>
-	            <div style="display:flex; gap:10px;">
-	                <input type="number" id="c-tx-min" placeholder="最少" value="13" min="1" step="1" style="flex:1">
-	                <input type="number" id="c-tx-max" placeholder="最多" value="18" min="1" step="1" style="flex:1">
-	            </div>
-	            <label>单笔最小间隔（天）</label><input type="number" id="c-min-interval" placeholder="建议 ≥1" value="1" min="0" step="1">
-	            <label>单一商户占比上限%</label><input type="number" id="c-merchant-max-share" placeholder="25" value="25" min="5" max="100" step="1">
-	            <label>卡号后4位（选填）</label><input type="text" id="c-tail" placeholder="8888" maxlength="4" pattern="[0-9]*">
-	            <button id="btn-add-card" class="btn">保存</button>
-	            <button class="btn btn-outline nav-btn" data-nav="home">返回</button>
-	        </div>
-	    </div>
+                <div id="card-dashboard" class="card-grid"></div>
+                
+                <div class="spacer"></div> 
+            </div>
 
-        <div id="page-add-rec" class="page container">
-        <h2>记一笔</h2>
-        <div class="dashboard-card">
-            <label>选择卡片</label><select id="r-card"></select>
-            <label>日期</label><input type="date" id="r-date">
-            <label>金额</label><input type="number" id="r-amt">
-            <label>类型</label>
-            <div class="type-group">
-                <label class="type-option">
-                    <input type="radio" name="r-type" value="消费" checked> 消费
-                </label>
-                <label class="type-option">
-                    <input type="radio" name="r-type" value="还款"> 还款
-                </label>
-                <label class="type-option">
-                    <input type="radio" name="r-type" value="退款"> 退款
-                </label>
-            </div>
-            <div id="fee-section">
-                <label>支付方式</label>
-                <select id="r-channel">
-                    <option value="刷卡">刷卡</option>
-                    <option value="支付宝">支付宝</option>
-                    <option value="微信">微信</option>
-                    <option value="京东">京东</option>
-                    <option value="其它">其它</option>
-                </select>
-                <label>费率预设</label>
-                <select id="r-preset"></select>
-                <div id="fee-group" style="display:flex; gap:10px;">
-                    <div style="flex:1"><label>费率%</label><input type="number" id="r-rate" value="0.60"></div>
-                    <div style="flex:1"><label>手续费</label><input type="text" id="r-fee" disabled style="color:red"></div>
+            <div id="page-records" class="page container">
+                <header class="page-header">
+                    <h2>账单流水</h2>
+                    <div class="header-controls">
+                        <select id="period-offset" class="select-sm">
+                            <option value="0">本期账单</option>
+                            <option value="1">上期账单</option>
+                            <option value="2">上上期</option>
+                        </select>
+                    </div>
+                </header>
+
+                <div id="records-summary-view">
+                    <div style="display:flex; justify-content:flex-end; margin-bottom:16px;">
+                        <button class="btn btn-sm btn-secondary" id="records-add-card-btn">新增卡片</button>
+                    </div>
+                    <div id="rec-card-list" class="card-grid"></div>
                 </div>
-                <div id="merchant-group"><label>商户</label><input type="text" id="r-merch"></div>
-                <div id="scene-group">
-                    <label>场景标签</label>
-                    <select id="r-scene">
-                        <option value="">不填</option>
-                        <option value="餐饮">餐饮</option>
-                        <option value="超市">超市</option>
-                        <option value="线上">线上</option>
-                        <option value="线下">线下</option>
-                        <option value="分期">分期</option>
-                        <option value="交通">交通</option>
-                        <option value="娱乐">娱乐</option>
-                        <option value="其它">其它</option>
-                    </select>
+
+                <div id="records-detail-view" style="display:none;">
+                    <div class="dashboard-card sticky-header">
+                        <div class="detail-header">
+                            <div>
+                                <div class="detail-title" id="record-detail-title"></div>
+                                <div class="detail-subtitle">账期内流水（倒序）</div>
+                            </div>
+                            <button class="btn btn-sm btn-outline" id="btn-record-back">返回</button>
+                        </div>
+                    </div>
+                    <div id="record-detail-list" class="record-list-container"></div>
+                    <div class="fab-detail" id="fab-detail-add">+</div>
                 </div>
-                <div id="refund-section">
-                    <label>关联消费（退款时选）</label>
-                    <select id="r-refund-src"></select>
+
+                <div class="fab" id="fab-add-record">
+                    <svg width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+                        <path d="M12 5v14M5 12h14" />
+                    </svg>
                 </div>
             </div>
-            <button id="btn-add-rec" class="btn">确认</button>
-            <button class="btn btn-outline nav-btn" data-nav="records">返回</button>
-        </div>
+
+            <div id="page-settings" class="page container">
+                <header class="page-header">
+                    <h2>设置</h2>
+                </header>
+                
+                <div class="settings-grid">
+                    <div class="dashboard-card">
+                        <div class="setting-row">
+                            <span>深色模式</span>
+                            <input type="checkbox" id="dark-switch" class="toggle-switch">
+                        </div>
+                        <div class="divider"></div>
+                        <div class="button-group-vertical">
+                            <button id="btn-export" class="btn btn-outline">备份数据</button>
+                            <button id="btn-clear" class="btn btn-danger-outline">清空重置</button>
+                            <button id="btn-logout" class="btn btn-outline">退出登录</button>
+                        </div>
+                        <div class="sync-status-mini" id="sync-status-mini">
+                            <span class="sync-status-mini-dot" id="sync-status-mini-dot"></span>
+                            <span id="sync-status-mini-text">已连接</span>
+                        </div>
+                    </div>
+
+                    <div class="dashboard-card">
+                        <div class="section-title">费率预设</div>
+                        <div class="form-grid">
+                            <input type="text" id="preset-name" placeholder="预设名称（如 某平台）">
+                            <input type="text" id="preset-merchant" placeholder="商户名称">
+                            <input type="number" id="preset-rate" placeholder="费率%" step="0.01">
+                        </div>
+                        <button class="btn btn-outline" id="btn-add-preset">新增预设</button>
+                        <div id="preset-list" class="list-stack"></div>
+                    </div>
+
+                    <div class="dashboard-card">
+                        <div class="section-title">额度变化记录</div>
+                        <div class="form-grid">
+                            <select id="l-card"></select>
+                            <input type="date" id="l-date">
+                            <select id="l-type">
+                                <option value="固额">固额</option>
+                                <option value="临额">临额</option>
+                            </select>
+                            <div class="row-inputs">
+                                <input type="number" id="l-before" placeholder="原额度">
+                                <input type="number" id="l-after" placeholder="新额度">
+                            </div>
+                        </div>
+                        <input type="text" id="l-note" placeholder="备注（选填）">
+                        <button class="btn btn-outline" id="btn-add-limit-event">添加记录</button>
+                        <div id="limit-event-list" class="list-stack"></div>
+                    </div>
+                </div>
+            </div>
+
+            <div id="page-add-card" class="page container">
+                <header class="page-header">
+                    <h2>添加/编辑卡片</h2>
+                </header>
+                <div class="dashboard-card form-card">
+                    <div class="form-section">
+                        <label>基本信息</label>
+                        <div class="form-grid two-col">
+                            <div>
+                                <span class="input-label">名称</span>
+                                <input type="text" id="c-name" placeholder="例如：招商Young">
+                            </div>
+                            <div>
+                                <span class="input-label">额度</span>
+                                <input type="number" id="c-limit" placeholder="50000">
+                            </div>
+                            <div>
+                                <span class="input-label">账单日 (每月)</span>
+                                <input type="number" id="c-bill" placeholder="例如: 5">
+                            </div>
+                            <div>
+                                <span class="input-label">卡号后4位</span>
+                                <input type="text" id="c-tail" placeholder="8888" maxlength="4">
+                            </div>
+                        </div>
+                    </div>
+
+                    <div class="divider"></div>
+
+                    <div class="form-section">
+                        <label>初始状态</label>
+                        <div class="form-grid two-col">
+                            <div>
+                                <span class="input-label">当前已用/欠款</span>
+                                <input type="number" id="c-current-used" placeholder="0">
+                            </div>
+                            <div>
+                                <span class="input-label">归属账期</span>
+                                <select id="c-current-used-period">
+                                    <option value="current" selected>当前账单期</option>
+                                    <option value="previous">上一账单期</option>
+                                </select>
+                            </div>
+                        </div>
+                    </div>
+
+                    <div class="divider"></div>
+
+                    <div class="form-section">
+                        <label>智能养卡策略</label>
+                        <div class="form-grid">
+                            <div>
+                                <span class="input-label">目标使用率 (%)</span>
+                                <input type="number" id="c-target-usage" value="65">
+                            </div>
+                            <div class="row-inputs">
+                                <div>
+                                    <span class="input-label">最少笔数</span>
+                                    <input type="number" id="c-tx-min" value="13">
+                                </div>
+                                <div>
+                                    <span class="input-label">最多笔数</span>
+                                    <input type="number" id="c-tx-max" value="18">
+                                </div>
+                            </div>
+                            <div class="row-inputs">
+                                <div>
+                                    <span class="input-label">最小间隔 (天)</span>
+                                    <input type="number" id="c-min-interval" value="1">
+                                </div>
+                                <div>
+                                    <span class="input-label">单一商户占比上限 (%)</span>
+                                    <input type="number" id="c-merchant-max-share" value="25">
+                                </div>
+                            </div>
+                        </div>
+                    </div>
+
+                    <div class="form-actions">
+                        <button id="btn-add-card" class="btn">保存卡片</button>
+                        <button class="btn btn-outline nav-btn" data-nav="home">取消</button>
+                    </div>
+                </div>
+            </div>
+
+            <div id="page-add-rec" class="page container">
+                <header class="page-header">
+                    <h2>记一笔</h2>
+                </header>
+                <div class="dashboard-card form-card">
+                    <div class="form-grid">
+                        <div>
+                            <span class="input-label">选择卡片</span>
+                            <select id="r-card"></select>
+                        </div>
+                        <div class="row-inputs">
+                             <div style="flex:2">
+                                <span class="input-label">日期</span>
+                                <input type="date" id="r-date">
+                            </div>
+                            <div style="flex:3">
+                                <span class="input-label">金额</span>
+                                <input type="number" id="r-amt" placeholder="0.00" style="font-size:18px; font-weight:bold;">
+                            </div>
+                        </div>
+                        
+                        <div>
+                            <span class="input-label">类型</span>
+                            <div class="type-group-styled">
+                                <label class="radio-card">
+                                    <input type="radio" name="r-type" value="消费" checked>
+                                    <span>消费</span>
+                                </label>
+                                <label class="radio-card">
+                                    <input type="radio" name="r-type" value="还款">
+                                    <span>还款</span>
+                                </label>
+                                <label class="radio-card">
+                                    <input type="radio" name="r-type" value="退款">
+                                    <span>退款</span>
+                                </label>
+                            </div>
+                        </div>
+                    </div>
+
+                    <div id="fee-section" class="expanded-section">
+                        <div class="form-grid">
+                            <div class="row-inputs">
+                                <div>
+                                    <span class="input-label">支付方式</span>
+                                    <select id="r-channel">
+                                        <option value="刷卡">刷卡</option>
+                                        <option value="支付宝">支付宝</option>
+                                        <option value="微信">微信</option>
+                                        <option value="京东">京东</option>
+                                        <option value="其它">其它</option>
+                                    </select>
+                                </div>
+                                <div>
+                                    <span class="input-label">场景</span>
+                                    <select id="r-scene">
+                                        <option value="">不填</option>
+                                        <option value="餐饮">餐饮</option>
+                                        <option value="超市">超市</option>
+                                        <option value="线上">线上</option>
+                                        <option value="线下">线下</option>
+                                        <option value="分期">分期</option>
+                                        <option value="交通">交通</option>
+                                        <option value="娱乐">娱乐</option>
+                                        <option value="其它">其它</option>
+                                    </select>
+                                </div>
+                            </div>
+
+                            <div>
+                                <span class="input-label">费率预设</span>
+                                <select id="r-preset"></select>
+                            </div>
+
+                            <div id="fee-group" class="row-inputs bg-highlight">
+                                <div>
+                                    <span class="input-label">费率 (%)</span>
+                                    <input type="number" id="r-rate" value="0.60">
+                                </div>
+                                <div>
+                                    <span class="input-label">预估手续费</span>
+                                    <input type="text" id="r-fee" disabled style="color:var(--danger); font-weight:bold;">
+                                </div>
+                            </div>
+                            
+                            <div id="merchant-group">
+                                <span class="input-label">商户名称</span>
+                                <input type="text" id="r-merch" placeholder="例如：沃尔玛">
+                            </div>
+                        </div>
+                        
+                        <div id="refund-section">
+                            <span class="input-label">关联原消费</span>
+                            <select id="r-refund-src"></select>
+                        </div>
+                    </div>
+
+                    <div class="form-actions">
+                        <button id="btn-add-rec" class="btn btn-primary-lg">确认记账</button>
+                        <button class="btn btn-outline nav-btn" data-nav="records">取消</button>
+                    </div>
+                </div>
+            </div>
+
+        </main>
     </div>
 
     <div id="rec-modal" class="rec-modal hidden">
@@ -243,42 +424,6 @@
                 </select>
             </div>
             <div id="rec-modal-list"></div>
-        </div>
-    </div>
-
-    <div class="tab-bar" id="tab-bar" style="display:none;">
-        <div class="tab-item" data-page="home">
-            <svg class="tab-icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round">
-                <path d="M4 20h16" />
-                <rect x="6" y="10" width="3.2" height="9.5" rx="1" />
-                <rect x="10.9" y="6" width="3.2" height="13.5" rx="1" />
-                <rect x="15.8" y="12" width="3.2" height="7.5" rx="1" />
-            </svg>
-            概览
-        </div>
-        <div class="tab-item" data-page="add-card">
-            <svg class="tab-icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round">
-                <rect x="3.5" y="6" width="17" height="12" rx="2.5" />
-                <path d="M6 11h12" />
-                <path d="M7 14h3" />
-            </svg>
-            办卡
-        </div>
-        <div class="tab-item" data-page="records">
-            <svg class="tab-icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round">
-                <path d="M7 4.5h8.5L19.5 8V19a1.5 1.5 0 0 1-1.5 1.5H7A1.5 1.5 0 0 1 5.5 19V6a1.5 1.5 0 0 1 1.5-1.5Z"/>
-                <path d="M15.5 4.5V8H19" />
-                <path d="M8.5 12h7" />
-                <path d="M8.5 15.5h5" />
-            </svg>
-            流水
-        </div>
-        <div class="tab-item" data-page="settings">
-            <svg class="tab-icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round">
-                <path d="M12 15.5a3.5 3.5 0 1 0 0-7 3.5 3.5 0 0 0 0 7Z" />
-                <path d="M19.4 13.5a7.6 7.6 0 0 0 0-3l2-1.6-2-3.5-2.5 1a7.6 7.6 0 0 0-2.6-1.5L14 1.5h-4l-.3 3.4a7.6 7.6 0 0 0-2.6 1.5l-2.5-1-2 3.5 2 1.6a7.6 7.6 0 0 0 0 3L.6 15.1l2 3.5 2.5-1a7.6 7.6 0 0 0 2.6 1.5l.3 3.4h4l.3-3.4a7.6 7.6 0 0 0 2.6-1.5l2.5 1 2-3.5Z" />
-            </svg>
-            设置
         </div>
     </div>
 
