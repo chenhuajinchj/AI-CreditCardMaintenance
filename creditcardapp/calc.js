@@ -163,7 +163,7 @@ export function normalizeAllRecords(records = []) {
     return (records || []).map(normalizeRecord);
 }
 
-function getPeriodBounds(card, today = new Date(), periodOffset = 0) {
+export function getPeriodBounds(card, today = new Date(), periodOffset = 0) {
     // 使用参考时间（向前滚 periodOffset 个月）计算账单期上下界
     const ref = new Date(today);
     ref.setMonth(ref.getMonth() - periodOffset);

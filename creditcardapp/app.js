@@ -1,4 +1,4 @@
-import { getNextBillDate, getLastBillDate, calcCardPeriodStats, calcBestCardSuggestion, buildMonthlySeries, computeCardStats, computeStats, normalizeAllRecords, normalizeRecType, normalizeChannel, computeMerchantMetrics, computeSceneMetrics } from "./calc.js";
+import { getNextBillDate, getLastBillDate, getPeriodBounds, calcCardPeriodStats, calcBestCardSuggestion, buildMonthlySeries, computeCardStats, computeStats, normalizeAllRecords, normalizeRecType, normalizeChannel, computeMerchantMetrics, computeSceneMetrics } from "./calc.js";
 import { showToast, setButtonLoading } from "./ui.js";
 // --- State & Constants ---
         const supabaseUrl = 'https://kcjlvxbffaxwpcrrxkbq.supabase.co';
