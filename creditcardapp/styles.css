@@ -34,6 +34,10 @@
     /* 布局 */
     --nav-height: 60px; /* Mobile bottom bar */
     --sidebar-width: 260px; /* Desktop sidebar */
+
+    /* 兼容旧变量命名（供 app.js 内联样式使用） */
+    --text: var(--text-main);
+    --sub-text: var(--text-secondary);
 }
 
 /* 深色模式重写变量 */
@@ -53,6 +57,10 @@ body.dark {
     
     --shadow-sm: 0 2px 8px rgba(0,0,0,0.2);
     --shadow-md: 0 8px 24px rgba(0,0,0,0.4);
+
+    /* 兼容旧变量命名（供 app.js 内联样式使用） */
+    --text: var(--text-main);
+    --sub-text: var(--text-secondary);
 }
 
 /* --- 2. 全局重置与排版 --- */
@@ -137,6 +145,51 @@ body.dark .nav-bar { border-top-color: rgba(255,255,255,0.1); }
     animation: fadeIn 0.3s ease;
 }
 .card-grid { display: grid; grid-template-columns: 1fr; gap: 16px; }
+
+/* Legacy helpers used by app.js */
+.icon { width: 20px; height: 20px; display: inline-block; vertical-align: middle; color: currentColor; }
+.icon-24 { width: 24px; height: 24px; }
+.icon-16 { width: 16px; height: 16px; }
+
+.progress-bg {
+    height: 10px;
+    border-radius: 999px;
+    background: rgba(0,0,0,0.06);
+    overflow: hidden;
+}
+body.dark .progress-bg { background: rgba(255,255,255,0.1); }
+.progress-bar {
+    height: 100%;
+    border-radius: 999px;
+}
+
+.suggest-pill {
+    display: flex;
+    align-items: center;
+    gap: 10px;
+    padding: 12px 14px;
+    border-radius: 999px;
+    background: rgba(0,122,255,0.08);
+    color: var(--primary);
+    margin-top: 14px;
+}
+body.dark .suggest-pill { background: rgba(10,132,255,0.15); }
+
+.refresh-btn {
+    display: inline-flex;
+    align-items: center;
+    justify-content: center;
+    width: 28px;
+    height: 28px;
+    margin-left: 8px;
+    border-radius: 50%;
+    background: rgba(0,122,255,0.12);
+    border: none;
+    cursor: pointer;
+    transition: transform 0.15s ease, background 0.15s ease;
+}
+.refresh-btn:hover { background: rgba(0,122,255,0.2); transform: translateY(-1px); }
+.refresh-btn svg { width: 14px; height: 14px; }
 
 @keyframes fadeIn {
     from { opacity: 0; transform: translateY(10px); }
@@ -453,15 +506,17 @@ input:focus, select:focus {
 
 /* Toast */
 .toast {
-    position: fixed; top: 20px; left: 50%; transform: translateX(-50%) translateY(-20px);
+    position: relative;
+    transform: translateY(-10px);
     background: rgba(0,0,0,0.8); color: white;
     padding: 12px 24px; border-radius: 30px;
     font-weight: 500; opacity: 0; transition: all 0.3s cubic-bezier(0.175, 0.885, 0.32, 1.275);
-    z-index: 10001; backdrop-filter: blur(10px);
+    backdrop-filter: blur(10px);
 }
-.toast.show { opacity: 1; transform: translateX(-50%) translateY(0); }
+.toast.show { opacity: 1; transform: translateY(0); }
 .toast.error { background: rgba(255, 59, 48, 0.9); }
 .toast.success { background: rgba(52, 199, 89, 0.9); }
+.toast-icon { margin-right: 8px; opacity: 0.9; }
 
 /* --- 6. Helper Classes --- */
 .spacer { height: 100px; }
@@ -491,6 +546,36 @@ body.dark .divider { background: rgba(255,255,255,0.05); }
     gap: 10px;
     pointer-events: none;
     z-index: 10000;
+}
+
+/* Sync mini status (设置页) */
+.sync-status-mini {
+    margin-top: 14px;
+    padding-top: 14px;
+    border-top: 1px solid rgba(0,0,0,0.06);
+    font-size: 12px;
+    color: var(--text-secondary);
+    display: flex;
+    align-items: center;
+    gap: 8px;
+}
+body.dark .sync-status-mini { border-top-color: rgba(255,255,255,0.08); }
+.sync-status-mini-dot {
+    width: 8px;
+    height: 8px;
+    border-radius: 50%;
+    background: var(--success);
+    box-shadow: 0 0 0 4px rgba(52,199,89,0.15);
+}
+
+/* Record list helpers */
+.amount-text { font-variant-numeric: tabular-nums; }
+.record--refund,
+.record--refunded-source {
+    background: rgba(255,149,0,0.10);
+}
+.record-refund-pair {
+    border-left: 4px solid rgba(255,149,0,0.55);
 }
 
 /* 记录详情悬浮按钮（移动端） */
