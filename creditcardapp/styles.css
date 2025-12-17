@@ -30,6 +30,10 @@
             padding: 20px 20px 24px;
             box-sizing: border-box;
         }
+        #page-records {
+            padding-bottom: 140px;
+            position: relative;
+        }
         .sync-status {
             max-width: 640px;
             margin: 0 auto;
@@ -295,28 +299,28 @@
         }
         .fab {
             position: fixed;
-            bottom: 90px;
-            right: 20px;
+            bottom: 72px;
+            right: 22px;
             background: radial-gradient(circle at 30% 0, #f9fafb 0, #0f172a 40%, #020617 100%);
             color: #F9FAFB;
-            width: 56px;
-            height: 56px;
+            width: 48px;
+            height: 48px;
             border-radius: 50%;
             display: flex;
             align-items: center;
             justify-content: center;
-            font-size: 30px;
-            box-shadow: 0 22px 45px rgba(15,23,42,0.7);
+            font-size: 24px;
+            box-shadow: 0 16px 32px rgba(15,23,42,0.4);
             z-index: 90;
             transform: translate3d(0,0,0);
         }
         .fab svg {
-            width: 24px;
-            height: 24px;
+            width: 22px;
+            height: 22px;
         }
         .fab:active {
             transform: scale(0.96) translateY(1px);
-            box-shadow: 0 16px 36px rgba(15,23,42,0.85);
+            box-shadow: 0 12px 28px rgba(15,23,42,0.65);
         }
         
         /* 表单控件 */
@@ -647,22 +651,27 @@
 .record-refund-pair {
     border-left: 4px solid #fbbf24;
 }
+#records-summary-view,
+#records-detail-view,
+#record-detail-list {
+    padding-bottom: 110px;
+}
 .fab-detail {
-    position: fixed;
-    right: 20px;
-    bottom: 90px;
-    width: 56px;
-    height: 56px;
-    border-radius: 50%;
-    background: radial-gradient(circle at 30% 0, #f9fafb 0, #0f172a 40%, #020617 100%);
-    color: #F9FAFB;
-    display: flex;
-    align-items: center;
-    justify-content: center;
-    font-size: 32px;
-    box-shadow: 0 22px 45px rgba(15,23,42,0.7);
-    z-index: 120;
-    cursor: pointer;
+            position: fixed;
+            right: 22px;
+            bottom: 72px;
+            width: 48px;
+            height: 48px;
+            border-radius: 50%;
+            background: radial-gradient(circle at 30% 0, #f9fafb 0, #0f172a 40%, #020617 100%);
+            color: #F9FAFB;
+            display: flex;
+            align-items: center;
+            justify-content: center;
+            font-size: 26px;
+            box-shadow: 0 16px 32px rgba(15,23,42,0.4);
+            z-index: 120;
+            cursor: pointer;
 }
 body.dark .fab-detail {
     background: radial-gradient(circle at 30% 0, #111827 0, #020617 40%, #000 100%);

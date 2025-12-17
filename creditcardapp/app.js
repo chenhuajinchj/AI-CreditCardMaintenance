@@ -441,6 +441,13 @@ function populateRecCardFilter() {
             return date.toISOString().slice(0,10); // YYYY-MM-DD
         }
 
+        function getLocalDateString(date = new Date()) {
+            const y = date.getFullYear();
+            const m = String(date.getMonth() + 1).padStart(2, '0');
+            const d = String(date.getDate()).padStart(2, '0');
+            return `${y}-${m}-${d}`;
+        }
+
         function ensureSuggestionSeeds() {
             // 确保每卡有一个默认种子，按日期变换
             const todayKey = getDailySeedKey();
@@ -509,6 +516,7 @@ function populateRecCardFilter() {
             const monthlyFee = (stats.overview || {}).totalFeeEstimate || 0;
             const merchantMetrics = computeMerchantMetrics(cards, recs, today, periodOffset);
             const sceneMetrics = computeSceneMetrics(cards, recs, today, periodOffset);
+            const todayStr = getLocalDateString(today);
 
             let html = '';
             cards.forEach((c, idx) => {
@@ -519,6 +527,7 @@ function populateRecCardFilter() {
                 const target = c.limit * targetRate;
                 const outstanding = per.netUsed ?? per.usedAmount ?? 0;
                 const { amount: suggest } = calcSuggestedAmount(c, per);
+                const hasTodayExpense = (recs || []).some(r => r.cardName === c.name && normalizeRecType(r.type) === '消费' && r.date === todayStr);
                 const m = merchantMetrics[c.name] || { topShare: 0, uniqueMerchants: 0, avgIntervalDays: null };
                 const s = sceneMetrics[c.name] || { uniqueScenes: 0, topSceneShare: 0 };
                 const txMin = c.targetTxMin || 13;
@@ -557,7 +566,7 @@ function populateRecCardFilter() {
                         <div class="stat-item" style="text-align:right;">
                             <span class="stat-label">今日建议</span>
                             <span class="stat-val highlight-val">
-                                ${suggest>1 ? '¥'+suggest.toFixed(0) : iconSparkle + '无需刷'}
+                                ${hasTodayExpense ? (iconSparkle + '今天已刷') : (suggest>1 ? '¥'+suggest.toFixed(0) : iconSparkle + '无需刷')}
                                 <button class="refresh-btn" onclick="refreshCardSuggestion(${idx})" title="刷新建议">${iconRefresh}</button>
                             </span>
                         </div>
