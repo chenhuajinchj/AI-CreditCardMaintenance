@@ -621,6 +621,39 @@ body.dark .sync-status-mini { border-top-color: rgba(255,255,255,0.08); }
     box-shadow: 0 0 0 4px rgba(52,199,89,0.15);
 }
 
+/* 今日刷卡推荐列表 */
+.today-reco-list {
+    margin-top: 10px;
+    display: flex;
+    flex-direction: column;
+    gap: 8px;
+}
+.today-reco-row {
+    display: flex;
+    justify-content: space-between;
+    align-items: flex-start;
+    gap: 12px;
+    padding: 10px 12px;
+    border-radius: 12px;
+    background: var(--bg-input);
+    border: 1px solid rgba(0,0,0,0.04);
+}
+body.dark .today-reco-row { border-color: rgba(255,255,255,0.08); }
+.today-reco-row.is-best {
+    border-color: var(--primary);
+    box-shadow: var(--shadow-sm);
+}
+.today-reco-name { font-weight: 700; color: var(--text-main); }
+.today-reco-sub { font-size: 12px; color: var(--text-secondary); margin-top: 4px; }
+.today-reco-amt {
+    font-weight: 800;
+    font-size: 16px;
+    color: var(--text-main);
+    text-align: right;
+    white-space: nowrap;
+}
+.today-reco-amt.muted { color: var(--text-secondary); }
+
 /* Record list helpers */
 .amount-text { font-variant-numeric: tabular-nums; }
 .record--refund,
