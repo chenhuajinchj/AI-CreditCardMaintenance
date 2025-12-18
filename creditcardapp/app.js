@@ -834,6 +834,19 @@ function populateRecCardFilter() {
                     todayCopyText = todaySuggestText;
                 }
             }
+            const todayRecoHtml = (todaySuggestions || []).map(s => {
+                const amtLabel = s.canSwipe ? `¥${s.range.min.toLocaleString()} - ${s.range.max.toLocaleString()}` : '今日不刷';
+                const subNote = s.canSwipe ? `免息期约 ${s.freeDays} 天 · 距账单日 ${s.daysToNextBill} 天` : '额度接近上限或无需刷';
+                return `
+                        <div class="today-reco-row ${s.isBest ? 'is-best' : ''}">
+                            <div>
+                                <div class="today-reco-name">${s.cardName} ${s.tail}</div>
+                                <div class="today-reco-sub">使用率 ${fmtPct(s.usageRate)} · ${subNote}</div>
+                            </div>
+                            <div class="today-reco-amt ${s.canSwipe ? '' : 'muted'}">${amtLabel}</div>
+                        </div>
+                        `;
+            }).join('');
             recoEl.innerHTML = `
                 <div style="display:flex; justify-content:space-between; align-items:center; gap:10px; margin-bottom:10px;">
                     <div style="font-weight:800;">今日刷卡推荐</div>
@@ -841,23 +854,7 @@ function populateRecCardFilter() {
                 </div>
                 <div style="font-size:14px; color:var(--text-main); font-weight:600;">${todaySuggestText}</div>
                 <div style="font-size:12px; color:var(--text-secondary); margin-top:6px;">复制后可粘贴到记账备注</div>
-                ${(todaySuggestions || []).length ? `
-                <div class="today-reco-list">
-                    ${todaySuggestions.map(s => {
-                        const amtLabel = s.canSwipe ? \`¥\${s.range.min.toLocaleString()} - \${s.range.max.toLocaleString()}\` : '今日不刷';
-                        const subNote = s.canSwipe ? \`免息期约 \${s.freeDays} 天 · 距账单日 \${s.daysToNextBill} 天\` : '额度接近上限或无需刷';
-                        return \`
-                        <div class="today-reco-row \${s.isBest ? 'is-best' : ''}">
-                            <div>
-                                <div class="today-reco-name">\${s.cardName} \${s.tail}</div>
-                                <div class="today-reco-sub">使用率 \${fmtPct(s.usageRate)} · \${subNote}</div>
-                            </div>
-                            <div class="today-reco-amt \${s.canSwipe ? '' : 'muted'}">\${amtLabel}</div>
-                        </div>
-                        \`;
-                    }).join('')}
-                </div>
-                ` : ''}
+                ${todaySuggestions.length ? `<div class="today-reco-list">${todayRecoHtml}</div>` : ''}
             `;
             const copyBtn = document.getElementById('btn-copy-today-reco');
             if (copyBtn) copyBtn.onclick = () => copyTextToClipboard(todayCopyText || todaySuggestText);
