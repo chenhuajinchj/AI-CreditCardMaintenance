@@ -569,6 +569,20 @@ function populateRecCardFilter() {
             };
         }
 
+        function getTodaySpentForCard(cardName, recs = [], today = new Date()) {
+            const todayStr = getLocalDateString(today); // 本地日界
+            let spent = 0;
+            (recs || []).forEach(r => {
+                if (r.cardName !== cardName) return;
+                if (!r.date || r.date !== todayStr) return;
+                const t = normalizeRecType(r.type);
+                const amt = Number(r.amountNum ?? r.amount ?? 0) || 0;
+                if (t === '消费') spent += amt;
+                else if (t === '退款') spent -= amt;
+            });
+            return spent;
+        }
+
         async function copyTextToClipboard(text) {
             const str = String(text || '').trim();
             if (!str) return;
@@ -872,6 +886,9 @@ function populateRecCardFilter() {
                 const finalSuggestion = Math.max(0, Math.floor(info.finalSuggestion ?? info.amount ?? 0));
                 const daily = Math.max(0, Math.floor(info.executableDaily || 0));
                 const canSwipe = finalSuggestion > 0;
+                const todaySpent = getTodaySpentForCard(c.name, recs, today);
+                const remaining = Math.max(0, finalSuggestion - todaySpent);
+                const doneToday = todaySpent >= finalSuggestion - 1e-9;
                 return {
                     cardName: c.name,
                     tail: c.tailNum ? `(${c.tailNum})` : '',
@@ -883,7 +900,10 @@ function populateRecCardFilter() {
                     freeDays,
                     limited: info.limitedByAvailability,
                     targetRemain: info.targetRemain || 0,
-                    realAvailable: info.realAvailable || 0
+                    realAvailable: info.realAvailable || 0,
+                    todaySpent,
+                    remaining,
+                    doneToday
                 };
             }).sort((a, b) => b.freeDays - a.freeDays);
             const best = todaySuggestions.find(s => s.canSwipe) || todaySuggestions[0] || null;
@@ -893,8 +913,11 @@ function populateRecCardFilter() {
             let todayCopyText = '';
             if (best) {
                 if (best.canSwipe) {
-                    todaySuggestText = `${best.cardName} · 建议 ¥${best.finalSuggestion.toLocaleString()}（日 ¥${best.daily.toLocaleString()}，免息期约 ${best.freeDays} 天）`;
-                    todayCopyText = `今日刷卡建议：${best.cardName} ¥${best.finalSuggestion.toLocaleString()}，日均 ¥${best.daily.toLocaleString()}（距账单日 ${best.daysToNextBill} 天）`;
+                    const progressText = best.doneToday
+                        ? `今日已刷 · 已刷 ¥${best.todaySpent.toLocaleString()} / 建议 ¥${best.finalSuggestion.toLocaleString()}`
+                        : `未完成 · 已刷 ¥${best.todaySpent.toLocaleString()} / 建议 ¥${best.finalSuggestion.toLocaleString()}（还差 ¥${best.remaining.toLocaleString()}）`;
+                    todaySuggestText = `${best.cardName} · ${progressText} · 日 ¥${best.daily.toLocaleString()} · 免息期约 ${best.freeDays} 天`;
+                    todayCopyText = `今日刷卡建议：${best.cardName} ${progressText}（距账单日 ${best.daysToNextBill} 天）`;
                     if (best.limited) {
                         todaySuggestText += ' · 受可用额度限制已下调';
                         todayCopyText += '。受可用额度限制，建议金额已下调';
@@ -905,8 +928,12 @@ function populateRecCardFilter() {
                 }
             }
             const todayRecoHtml = (todaySuggestions || []).map(s => {
-                const amtLabel = s.canSwipe ? `¥${s.finalSuggestion.toLocaleString()}（日 ¥${s.daily.toLocaleString()}）` : '今日不刷';
-                const subNote = s.canSwipe ? `免息期约 ${s.freeDays} 天 · 距账单日 ${s.daysToNextBill} 天${s.limited ? ' · 受额度限制' : ''}` : '额度接近上限或无需刷';
+                const amtLabel = s.canSwipe
+                    ? (s.doneToday
+                        ? `今日已刷 · 已刷 ¥${s.todaySpent.toLocaleString()} / 建议 ¥${s.finalSuggestion.toLocaleString()}`
+                        : `未完成 · 已刷 ¥${s.todaySpent.toLocaleString()} / 建议 ¥${s.finalSuggestion.toLocaleString()}（还差 ¥${s.remaining.toLocaleString()}）`)
+                    : '今日不刷';
+                const subNote = s.canSwipe ? `日 ¥${s.daily.toLocaleString()} · 免息期约 ${s.freeDays} 天 · 距账单日 ${s.daysToNextBill} 天${s.limited ? ' · 受额度限制' : ''}` : '额度接近上限或无需刷';
                 return `
                         <div class="today-reco-row ${s.isBest ? 'is-best' : ''}">
                             <div>
