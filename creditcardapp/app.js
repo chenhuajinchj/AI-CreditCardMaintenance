@@ -1,4 +1,5 @@
-import { getNextBillDate, getLastBillDate, getPeriodBounds, computeRepaymentStrategy, selfTestRepaymentStrategy, calcCardPeriodStats, calcBestCardSuggestion, buildMonthlySeries, computeCardStats, computeStats, normalizeAllRecords, normalizeRecType, normalizeChannel, computeMerchantMetrics, computeSceneMetrics } from "./calc.js";
+import { getNextBillDate, getLastBillDate, getPeriodBounds, computeRepaymentStrategy, selfTestRepaymentStrategy, calcCardPeriodStats, calcBestCardSuggestion, buildMonthlySeries, computeCardStats, computeStats, normalizeAllRecords, normalizeRecType, normalizeChannel, computeMerchantMetrics, computeSceneMetrics, getBillingCycleRange } from "./calc.js";
+import { seededRandom, clamp as clampNumber } from "./utils/random.js";
 import { showToast, setButtonLoading } from "./ui.js";
 // --- State & Constants ---
         const supabaseUrl = 'https://kcjlvxbffaxwpcrrxkbq.supabase.co';
@@ -449,11 +450,6 @@ function populateRecCardFilter() {
             });
         }
 
-        // 刷新单个卡片的建议金额（应用随机因子）
-        function randomInt(min, max) {
-            return Math.floor(Math.random() * (max - min + 1)) + min;
-        }
-
         function getDailySeedKey(date = new Date()) {
             return date.toISOString().slice(0,10); // YYYY-MM-DD
         }
@@ -477,14 +473,25 @@ function populateRecCardFilter() {
             });
         }
 
-        function calcSuggestedAmount(card, perStats) {
+        function calcSuggestedAmount(card, perStats, today = new Date()) {
             const limit = Number(card.limit) || 0;
+            const cardId = card.id || card.name || 'card';
             const fallbackCycleRaw = ((perStats?.periodExpense || 0) - (perStats?.periodRefund || 0));
             const cycleUsedRaw = Number(perStats?.cycleUsedRaw ?? fallbackCycleRaw ?? 0);
             const cycleUsed = Math.max(0, Number(perStats?.cycleUsed ?? cycleUsedRaw) || 0);
             const cycleUsageRate = Number(perStats?.cycleUsageRate || 0);
             const daysLeftInCycle = Math.max(1, Number(perStats?.daysLeftInCycle) || 1);
-            const realAvailable = limit > 0 ? Math.max(0, Number(perStats?.realAvailable ?? perStats?.remaining ?? 0) || 0) : 0;
+            const netUsed = Number(perStats?.netUsed ?? perStats?.usedAmount ?? 0) || 0;
+            const todayStr = new Date().toLocaleDateString('sv-SE'); // YYYY-MM-DD 本地日期，避免跨平台解析偏差
+            let cycleStart = perStats?.cycleStart instanceof Date && !Number.isNaN(perStats.cycleStart.getTime())
+                ? perStats.cycleStart
+                : null;
+            if (!cycleStart) {
+                const fallbackCycle = getBillingCycleRange(card.billDay, today);
+                cycleStart = fallbackCycle.cycleStart;
+            }
+            const cycleStartISO = cycleStart ? cycleStart.toISOString() : '';
+
             if (limit <= 0) {
                 return {
                     amount: 0,
@@ -496,32 +503,59 @@ function populateRecCardFilter() {
                     realAvailable: 0,
                     cycleUsed,
                     cycleUsageRate,
-                    daysLeftInCycle
+                    daysLeftInCycle,
+                    dailyCap: 0,
+                    targetRate: 0,
+                    targetAmount: 0
                 };
             }
 
-            const targetRemain = Math.max(0, limit * 0.70 - cycleUsed);
-            const finalSuggestion = Math.min(targetRemain, realAvailable);
-            const plannedDaily = targetRemain / daysLeftInCycle;
-            const executableDaily = finalSuggestion / daysLeftInCycle;
-            const limitedByAvailability = realAvailable < targetRemain - 1e-9;
+            // 周期目标率：同卡同周期固定（0.60-0.75）
+            const rateSeed = `${cardId}_${cycleStartISO}_rate`;
+            const targetRate = 0.60 + seededRandom(rateSeed) * 0.15;
+            const targetAmount = limit * targetRate;
+            const targetRemain = Math.max(0, targetAmount - cycleUsed);
+
+            // 今日建议：确定性随机 + 双重兜底
+            const dailyCap = limit * 0.5;
+            const d = Math.max(1, daysLeftInCycle);
+            const baseAvg = targetRemain / d;
+            const factor = d === 1
+                ? 1
+                : 0.2 + seededRandom(`${cardId}_${cycleStartISO}_${todayStr}_factor`) * 2.6;
+            let plan = baseAvg * factor;
+            if (d === 1) {
+                plan = Math.min(targetRemain, dailyCap);
+            }
+            plan = Math.min(plan, targetRemain, dailyCap);
+            const todayPlan = Math.floor(plan);
+
+            // 真实可用额度兜底
+            const netUsedSafe = clampNumber(netUsed, 0, limit);
+            const realAvailable = Math.max(0, limit - netUsedSafe);
+            const todaySuggestion = Math.min(todayPlan, realAvailable);
+            const limitedByAvailability = realAvailable < todayPlan - 1e-9;
 
             return {
-                amount: finalSuggestion,
-                finalSuggestion,
+                amount: todaySuggestion,
+                finalSuggestion: todaySuggestion,
+                todayPlan,
                 targetRemain,
-                plannedDaily,
-                executableDaily,
+                targetRate,
+                targetAmount,
+                plannedDaily: baseAvg,
+                executableDaily: todaySuggestion,
                 limitedByAvailability,
                 realAvailable,
                 cycleUsed,
                 cycleUsageRate,
-                daysLeftInCycle
+                daysLeftInCycle,
+                dailyCap
             };
         }
 
-        function calcSuggestedRange(card, perStats) {
-            const info = calcSuggestedAmount(card, perStats);
+        function calcSuggestedRange(card, perStats, today = new Date()) {
+            const info = calcSuggestedAmount(card, perStats, today);
             const amt = Math.max(0, Math.floor(info.finalSuggestion ?? info.amount ?? 0));
             return {
                 min: amt,
@@ -635,7 +669,7 @@ function populateRecCardFilter() {
                 const targetRate = typeof c.targetUsageRate === 'number' ? c.targetUsageRate : 0.65;
                 const target = c.limit * targetRate;
                 const outstanding = per.netUsed ?? per.usedAmount ?? 0;
-                const suggestInfo = calcSuggestedAmount(c, per);
+                const suggestInfo = calcSuggestedAmount(c, per, today);
                 const suggest = suggestInfo.finalSuggestion ?? suggestInfo.amount ?? 0;
                 const hasTodayExpense = (recs || []).some(r => r.cardName === c.name && normalizeRecType(r.type) === '消费' && r.date === todayStr);
                 const m = merchantMetrics[c.name] || { topShare: 0, uniqueMerchants: 0, avgIntervalDays: null };
@@ -831,7 +865,7 @@ function populateRecCardFilter() {
             // 今日刷卡推荐（列出所有卡）
             const todaySuggestions = (cards || []).map(c => {
                 const per = perCardStats.find(pc => pc.cardName === c.name) || {};
-                const info = calcSuggestedAmount(c, per);
+                const info = calcSuggestedAmount(c, per, today);
                 const nextBill = getNextBillDate(c.billDay, today);
                 const daysToNextBill = Math.max(0, Math.ceil((nextBill - today) / 86400000));
                 const freeDays = daysToNextBill + GRACE_DAYS;
