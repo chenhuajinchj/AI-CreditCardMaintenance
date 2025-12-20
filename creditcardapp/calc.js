@@ -1,3 +1,7 @@
+const DEFAULT_TIMEZONE = (Intl.DateTimeFormat().resolvedOptions().timeZone) || 'Asia/Shanghai';
+const clamp01 = (v) => Math.min(1, Math.max(0, v));
+const clamp = (v, min, max) => Math.min(Math.max(v, min), max);
+
 export function getNextBillDate(billDay = 1, today = new Date()) {
     const day = billDay || 1;
     let next = new Date(today.getFullYear(), today.getMonth(), day);
@@ -49,6 +53,49 @@ const normalizeBillDay = (billDay) => {
     if (!Number.isInteger(d) || d < 1) return 1;
     return Math.min(31, d);
 };
+
+const toZonedTime = (date, timezone = DEFAULT_TIMEZONE) => {
+    const tz = timezone || DEFAULT_TIMEZONE;
+    // 将时间转换为指定时区的本地时间，避免跨日偏差
+    return new Date(date.toLocaleString('en-US', { timeZone: tz }));
+};
+
+const clampStatementDay = (year, monthIndex, statementDay) => {
+    const normalized = normalizeBillDay(statementDay);
+    return clampDayInMonth(year, monthIndex, normalized);
+};
+
+export function getBillingCycleRange(statementDay, now = new Date(), timezone = DEFAULT_TIMEZONE) {
+    const zonedNow = toZonedTime(now, timezone);
+    const y = zonedNow.getFullYear();
+    const m = zonedNow.getMonth();
+    const thisMonthDay = clampStatementDay(y, m, statementDay);
+
+    // 账单日当天计入上一周期：因此若今天<=账单日，需要取上个月作为上一账单日
+    let lastStatement = new Date(y, m, thisMonthDay);
+    if (zonedNow.getDate() <= thisMonthDay) {
+        const prev = new Date(zonedNow);
+        prev.setMonth(prev.getMonth() - 1);
+        const prevDay = clampStatementDay(prev.getFullYear(), prev.getMonth(), statementDay);
+        lastStatement = new Date(prev.getFullYear(), prev.getMonth(), prevDay);
+    }
+    const nextMonthBase = new Date(lastStatement);
+    nextMonthBase.setMonth(nextMonthBase.getMonth() + 1);
+    const nextDay = clampStatementDay(nextMonthBase.getFullYear(), nextMonthBase.getMonth(), statementDay);
+    const nextStatement = new Date(nextMonthBase.getFullYear(), nextMonthBase.getMonth(), nextDay);
+
+    const cycleStart = addDaysLocal(lastStatement, 1);
+    const cycleEndExclusive = addDaysLocal(nextStatement, 1);
+    const daysLeftInCycle = Math.max(1, Math.ceil((cycleEndExclusive - zonedNow) / 86400000));
+
+    return {
+        cycleStart,
+        cycleEndExclusive,
+        daysLeftInCycle,
+        lastStatementDate: lastStatement,
+        nextStatementDate: nextStatement
+    };
+}
 
 const nextOccurrenceOfDay = (day, today = new Date(), { includeToday = true } = {}) => {
     const d = normalizeBillDay(day);
@@ -355,12 +402,10 @@ export function normalizeAllRecords(records = []) {
 }
 
 export function getPeriodBounds(card, today = new Date(), periodOffset = 0) {
-    // 使用参考时间（向前滚 periodOffset 个月）计算账单期上下界
     const ref = new Date(today);
     ref.setMonth(ref.getMonth() - periodOffset);
-    const start = getLastBillDate(card.billDay, ref);
-    const end = getNextBillDate(card.billDay, ref);
-    return { start, end };
+    const { cycleStart, cycleEndExclusive } = getBillingCycleRange(card.billDay, ref, DEFAULT_TIMEZONE);
+    return { start: cycleStart, end: cycleEndExclusive };
 }
 
 export function calcCardPeriodStats(card, recs, today = new Date(), periodOffset = 0) {
@@ -447,39 +492,61 @@ export function computeCardStats(cards = [], records = [], today = new Date(), p
         const limit = Number(card.limit) || 0;
         const includeBase = periodOffset === 0 && card.currentUsedPeriod !== 'previous';
         const baseUsed = includeBase ? (Number(card.currentUsed) || 0) : 0;
-        let used = baseUsed;
+        const cycleInfo = getBillingCycleRange(card.billDay, (() => {
+            const ref = new Date(today);
+            ref.setMonth(ref.getMonth() - periodOffset);
+            return ref;
+        })(), DEFAULT_TIMEZONE);
+        let netUsed = baseUsed;
         let usedCount = 0;
-        const { start: lastBill, end: nextBill } = getPeriodBounds(card, today, periodOffset);
+        let cycleUsedRaw = 0;
         (records || []).forEach(r => {
             if (r.cardName !== card.name) return;
             const t = normalizeRecType(r.type);
             const amt = amountOf(r);
             const rd = parseLocalDate(r.date);
             if (Number.isNaN(rd.getTime())) return;
-            // 账单期判断：使用账单日
-            if (rd < lastBill || rd >= nextBill) return;
+            if (rd < cycleInfo.cycleStart || rd >= cycleInfo.cycleEndExclusive) return;
             if (t === '消费') {
-                used += amt;
+                netUsed += amt;
+                cycleUsedRaw += amt;
                 usedCount += 1;
-            } else if (t === '退款' || t === '还款') {
-                used -= amt;
+            } else if (t === '退款') {
+                netUsed -= amt;
+                cycleUsedRaw -= amt;
+            } else if (t === '还款') {
+                netUsed -= amt;
             }
         });
-        const remain = Math.max(0, limit - used);
-        const rate = limit > 0 ? Math.min(1, Math.max(0, used / limit)) : 0;
+        const netUsedForAvail = limit > 0 ? clamp(netUsed, 0, limit) : 0;
+        const realAvailable = limit > 0 ? Math.max(0, limit - netUsedForAvail) : 0;
+        const remain = realAvailable;
+        const rate = limit > 0 ? clamp01(netUsed / limit) : 0;
+        const cycleUsed = Math.max(0, cycleUsedRaw);
+        const cycleUsageRate = limit > 0 ? clamp01(cycleUsed / limit) : 0;
         return {
             cardName: card.name,
             limit,
-            used,
+            used: netUsed,
+            netUsed,
+            netUsedForAvail,
+            realAvailable,
             usedCount,
             remain,
-            rate
+            rate,
+            cycleUsedRaw,
+            cycleUsed,
+            cycleTxnCount: usedCount,
+            cycleUsageRate,
+            daysLeftInCycle: cycleInfo.daysLeftInCycle,
+            cycleStart: cycleInfo.cycleStart,
+            cycleEndExclusive: cycleInfo.cycleEndExclusive
         };
     });
     const totalLimit = perCard.reduce((s,c)=>s+c.limit,0);
-    const totalUsed = perCard.reduce((s,c)=>s+c.used,0);
-    const totalRemain = Math.max(0, totalLimit - totalUsed);
-    const usageRate = totalLimit > 0 ? Math.min(1, totalUsed / totalLimit) : 0;
+    const totalUsed = perCard.reduce((s,c)=>s+c.netUsed,0);
+    const totalRemain = perCard.reduce((s,c)=>s + (c.realAvailable || 0), 0);
+    const usageRate = totalLimit > 0 ? clamp01(totalUsed / totalLimit) : 0;
     return { totalLimit, totalUsed, totalRemain, usageRate, perCard };
 }
 
@@ -489,35 +556,46 @@ export function computeStats(cards = [], records = [], today = new Date(), perio
         const limit = Number(card.limit) || 0;
         const includeBase = periodOffset === 0 && card.currentUsedPeriod !== 'previous';
         const baseUsed = includeBase ? (Number(card.currentUsed) || 0) : 0;
+        const ref = new Date(today);
+        ref.setMonth(ref.getMonth() - periodOffset);
+        const cycleInfo = getBillingCycleRange(card.billDay, ref, DEFAULT_TIMEZONE);
+
         let netUsed = baseUsed;     // 欠款/净占用（消费-退款-还款）
         let periodExpense = 0;      // 消费额
         let periodRefund = 0;       // 退款额
         let periodRepay = 0;        // 还款额
         let usedCount = 0;          // 只计消费笔数
         let feeEstimate = 0;        // 账单期内手续费（消费）
-        const { start: lastBill, end: nextBill } = getPeriodBounds(card, today, periodOffset);
+        let cycleUsedRaw = 0;       // 本期消费-退款（不因还款减少）
         (records || []).forEach(r => {
             if (r.cardName !== card.name) return;
             const t = normalizeRecType(r.type);
             const rd = parseLocalDate(r.date);
             if (Number.isNaN(rd.getTime())) return;
-            if (rd < lastBill || rd >= nextBill) return;
+            if (rd < cycleInfo.cycleStart || rd >= cycleInfo.cycleEndExclusive) return;
             const amt = amountOf(r);
             if (t === '消费') {
                 netUsed += amt;
                 periodExpense += amt;
                 usedCount += 1;
                 feeEstimate += Number(r.fee || 0);
+                cycleUsedRaw += amt;
             } else if (t === '退款') {
                 netUsed -= amt;
                 periodRefund += amt;
+                cycleUsedRaw -= amt;
             } else if (t === '还款') {
                 netUsed -= amt;
                 periodRepay += amt;
             }
         });
-        const remaining = Math.max(0, limit - netUsed);
-        const usageRate = limit > 0 ? Math.min(1, Math.max(0, netUsed / limit)) : 0;
+
+        const cycleUsed = Math.max(0, cycleUsedRaw);
+        const netUsedForAvail = limit > 0 ? clamp(netUsed, 0, limit) : 0;
+        const realAvailable = limit > 0 ? Math.max(0, limit - netUsedForAvail) : 0;
+        const remaining = realAvailable;
+        const usageRate = limit > 0 ? clamp01(netUsed / limit) : 0;
+        const cycleUsageRate = limit > 0 ? clamp01(cycleUsed / limit) : 0;
         return {
             cardName: card.name,
             limit,
@@ -525,13 +603,22 @@ export function computeStats(cards = [], records = [], today = new Date(), perio
             usedAmount: netUsed,
             // 新字段
             netUsed,
+            netUsedForAvail,
             periodExpense,
             periodRefund,
             periodRepay,
             usedCount,
             remaining,
             feeEstimate,
-            usageRate
+            usageRate,
+            realAvailable,
+            cycleUsedRaw,
+            cycleUsed,
+            cycleTxnCount: usedCount,
+            cycleUsageRate,
+            daysLeftInCycle: cycleInfo.daysLeftInCycle,
+            cycleStart: cycleInfo.cycleStart,
+            cycleEndExclusive: cycleInfo.cycleEndExclusive
         };
     });
 
@@ -541,8 +628,10 @@ export function computeStats(cards = [], records = [], today = new Date(), perio
     const totalRefund = perCard.reduce((s,c)=>s + (c.periodRefund || 0), 0);
     const totalRepay = perCard.reduce((s,c)=>s + (c.periodRepay || 0), 0);
     const totalFeeEstimate = perCard.reduce((s,c)=>s + (c.feeEstimate || 0), 0);
-    const totalRemaining = Math.max(0, totalLimit - totalNetUsed);
-    const usageRate = totalLimit > 0 ? Math.min(1, totalNetUsed / totalLimit) : 0;
+    const totalCycleUsed = perCard.reduce((s,c)=>s + (c.cycleUsed || 0), 0);
+    const totalRemaining = perCard.reduce((s,c)=>s + (c.realAvailable || c.remaining || 0), 0);
+    const usageRate = totalLimit > 0 ? clamp01(totalNetUsed / totalLimit) : 0;
+    const cycleUsageRate = totalLimit > 0 ? clamp01(totalCycleUsed / totalLimit) : 0;
 
     return {
         overview: {
@@ -555,7 +644,9 @@ export function computeStats(cards = [], records = [], today = new Date(), perio
             totalUsed: totalNetUsed,
             totalRemaining,
             totalFeeEstimate,
-            usageRate
+            usageRate,
+            totalCycleUsed,
+            cycleUsageRate
         },
         perCard
     };

@@ -478,35 +478,61 @@ function populateRecCardFilter() {
         }
 
         function calcSuggestedAmount(card, perStats) {
-            // 返回 { amount, reason }
             const limit = Number(card.limit) || 0;
-            const used = Math.max(0, perStats.netUsed ?? perStats.usedAmount ?? 0);
-            const min = 10;
-            const maxByHalf = limit * 0.5;
-            const maxByRemain = Math.max(0, limit * 0.70 - used); // 保证剩余≥30%
-            const max = Math.min(maxByHalf, maxByRemain);
-            if (max < min) {
-                return { amount: 0, reason: '接近上限/剩余不足30%' };
+            const fallbackCycleRaw = ((perStats?.periodExpense || 0) - (perStats?.periodRefund || 0));
+            const cycleUsedRaw = Number(perStats?.cycleUsedRaw ?? fallbackCycleRaw ?? 0);
+            const cycleUsed = Math.max(0, Number(perStats?.cycleUsed ?? cycleUsedRaw) || 0);
+            const cycleUsageRate = Number(perStats?.cycleUsageRate || 0);
+            const daysLeftInCycle = Math.max(1, Number(perStats?.daysLeftInCycle) || 1);
+            const realAvailable = limit > 0 ? Math.max(0, Number(perStats?.realAvailable ?? perStats?.remaining ?? 0) || 0) : 0;
+            if (limit <= 0) {
+                return {
+                    amount: 0,
+                    finalSuggestion: 0,
+                    targetRemain: 0,
+                    plannedDaily: 0,
+                    executableDaily: 0,
+                    limitedByAvailability: false,
+                    realAvailable: 0,
+                    cycleUsed,
+                    cycleUsageRate,
+                    daysLeftInCycle
+                };
             }
-            const seed = suggestionSeedByCard[card.name]?.version || 0;
-            // 简单用 seed 影响随机：多次刷新 version++，同日不刷新保持原值
-            const rngBase = Math.random() + (seed * 0.01);
-            const clamp = Math.max(min, Math.min(max, Math.floor(min + rngBase * (max - min + 1))));
-            // 二次随机打散（取两次均值，使分布稍偏中间）
-            const another = randomInt(min, max);
-            const amount = Math.floor((clamp + another) / 2);
-            return { amount, reason: '' };
+
+            const targetRemain = Math.max(0, limit * 0.70 - cycleUsed);
+            const finalSuggestion = Math.min(targetRemain, realAvailable);
+            const plannedDaily = targetRemain / daysLeftInCycle;
+            const executableDaily = finalSuggestion / daysLeftInCycle;
+            const limitedByAvailability = realAvailable < targetRemain - 1e-9;
+
+            return {
+                amount: finalSuggestion,
+                finalSuggestion,
+                targetRemain,
+                plannedDaily,
+                executableDaily,
+                limitedByAvailability,
+                realAvailable,
+                cycleUsed,
+                cycleUsageRate,
+                daysLeftInCycle
+            };
         }
 
         function calcSuggestedRange(card, perStats) {
-            const limit = Number(card?.limit) || 0;
-            const used = Math.max(0, perStats?.netUsed ?? perStats?.usedAmount ?? 0);
-            const min = 10;
-            const maxByHalf = limit * 0.5;
-            const maxByRemain = Math.max(0, limit * 0.70 - used); // 保证剩余≥30%
-            const max = Math.floor(Math.min(maxByHalf, maxByRemain));
-            if (max < min) return { min: 0, max: 0 };
-            return { min, max };
+            const info = calcSuggestedAmount(card, perStats);
+            const amt = Math.max(0, Math.floor(info.finalSuggestion ?? info.amount ?? 0));
+            return {
+                min: amt,
+                max: amt,
+                plannedDaily: info.plannedDaily || 0,
+                executableDaily: info.executableDaily || 0,
+                limitedByAvailability: info.limitedByAvailability,
+                targetRemain: info.targetRemain || 0,
+                realAvailable: info.realAvailable || 0,
+                daysLeftInCycle: info.daysLeftInCycle || 1
+            };
         }
 
         async function copyTextToClipboard(text) {
@@ -605,11 +631,12 @@ function populateRecCardFilter() {
             cards.forEach((c, idx) => {
                 const per = (stats.perCard || []).find(pc => pc.cardName === c.name) || { periodExpense:0, netUsed:0, usedAmount:0, usedCount:0, remaining:0, usageRate:0 };
                 const billDay = c.billDay || 1;
-                const daysLeft = Math.max(0, Math.ceil((getNextBillDate(billDay, today) - today) / 86400000));
+                const daysLeft = Math.max(1, per.daysLeftInCycle || Math.ceil((getNextBillDate(billDay, today) - today) / 86400000));
                 const targetRate = typeof c.targetUsageRate === 'number' ? c.targetUsageRate : 0.65;
                 const target = c.limit * targetRate;
                 const outstanding = per.netUsed ?? per.usedAmount ?? 0;
-                const { amount: suggest } = calcSuggestedAmount(c, per);
+                const suggestInfo = calcSuggestedAmount(c, per);
+                const suggest = suggestInfo.finalSuggestion ?? suggestInfo.amount ?? 0;
                 const hasTodayExpense = (recs || []).some(r => r.cardName === c.name && normalizeRecType(r.type) === '消费' && r.date === todayStr);
                 const m = merchantMetrics[c.name] || { topShare: 0, uniqueMerchants: 0, avgIntervalDays: null };
                 const s = sceneMetrics[c.name] || { uniqueScenes: 0, topSceneShare: 0 };
@@ -643,15 +670,16 @@ function populateRecCardFilter() {
                     
                     <div class="stat-grid">
                         <div class="stat-item">
-                            <span class="stat-label">本期消费</span>
-                            <span class="stat-val">¥${(per.periodExpense || 0).toLocaleString()}</span>
+                            <span class="stat-label">本期进度</span>
+                            <span class="stat-val">¥${(per.cycleUsed || 0).toLocaleString()}（${((per.cycleUsageRate || 0)*100).toFixed(0)}%）</span>
                         </div>
                         <div class="stat-item" style="text-align:right;">
                             <span class="stat-label">今日建议</span>
                             <span class="stat-val highlight-val">
-                                ${hasTodayExpense ? (iconSparkle + '今天已刷') : (suggest>1 ? '¥'+suggest.toFixed(0) : iconSparkle + '无需刷')}
+                                ${hasTodayExpense ? (iconSparkle + '今天已刷') : (suggest>1 ? `¥${suggest.toFixed(0)}（日 ¥${Math.max(0, Math.floor(suggestInfo.executableDaily || 0)).toLocaleString()}）` : iconSparkle + '无需刷')}
                                 <button class="refresh-btn" onclick="refreshCardSuggestion(${idx})" title="刷新建议">${iconRefresh}</button>
                             </span>
+                            ${suggestInfo.limitedByAvailability ? `<div style="font-size:12px; color:var(--danger); margin-top:4px;">受可用额度限制，建议金额已下调</div>` : ''}
                         </div>
                         <div class="stat-item" style="grid-column:1 / span 2;">
                             <span class="stat-label">已刷笔数</span>
@@ -659,13 +687,13 @@ function populateRecCardFilter() {
                         </div>
                         <div class="stat-item" style="grid-column:1 / span 2; color:var(--sub-text); font-size:13px;">
                             <span class="stat-label">当前欠款/已用</span>
-                            <span class="stat-val">¥${(per.netUsed ?? per.usedAmount ?? 0).toLocaleString()}（剩余 ¥${(per.remaining || 0).toLocaleString()}）</span>
+                            <span class="stat-val">¥${(per.netUsed ?? per.usedAmount ?? 0).toLocaleString()}（剩余 ¥${((per.realAvailable ?? per.remaining) || 0).toLocaleString()}）</span>
                         </div>
                     </div>
 
                     <div class="suggest-pill">
                         <span>${iconCalendar}</span>
-                        <span>距账单日 <b>${daysLeft}</b> 天，目标使用率 <b>${(targetRate*100).toFixed(0)}%</b>（¥${target.toLocaleString()}）</span>
+                        <span>距账单日 <b>${daysLeft}</b> 天 · 本期使用率 <b>${((per.cycleUsageRate || 0)*100).toFixed(0)}%</b> · 目标 <b>${(targetRate*100).toFixed(0)}%</b>（¥${target.toLocaleString()}）</span>
                     </div>
 
                     <div class="dashboard-card" style="margin-top:12px; padding:12px 14px; box-shadow:none;">
@@ -774,7 +802,7 @@ function populateRecCardFilter() {
             const fmtPct = (p) => `${((Number(p) || 0) * 100).toFixed(0)}%`;
 
             const totalLimit = ov.totalLimit || 0;
-            const totalUsedThisPeriod = (ov.totalExpense || 0) - (ov.totalRefund || 0);
+            const totalUsedThisPeriod = ov.totalCycleUsed ?? ((ov.totalExpense || 0) - (ov.totalRefund || 0));
             const totalDebt = ov.totalNetUsed || 0;
 
             kpiEl.innerHTML = `
@@ -784,7 +812,7 @@ function populateRecCardFilter() {
                     <div class="kpi-sub">${(totalLimit / 10000).toFixed(1)} 万</div>
                 </div>
                 <div class="kpi-item">
-                    <div class="kpi-label">本期已用</div>
+                    <div class="kpi-label">本期进度</div>
                     <div class="kpi-value">${fmtMoney(totalUsedThisPeriod)}</div>
                     <div class="kpi-sub">消费-退款</div>
                 </div>
@@ -803,21 +831,25 @@ function populateRecCardFilter() {
             // 今日刷卡推荐（列出所有卡）
             const todaySuggestions = (cards || []).map(c => {
                 const per = perCardStats.find(pc => pc.cardName === c.name) || {};
-                const range = calcSuggestedRange(c, per);
+                const info = calcSuggestedAmount(c, per);
                 const nextBill = getNextBillDate(c.billDay, today);
                 const daysToNextBill = Math.max(0, Math.ceil((nextBill - today) / 86400000));
                 const freeDays = daysToNextBill + GRACE_DAYS;
-                const mid = range.max >= range.min ? Math.floor((range.min + range.max) / 2) : 0;
-                const canSwipe = range.max > 0;
+                const finalSuggestion = Math.max(0, Math.floor(info.finalSuggestion ?? info.amount ?? 0));
+                const daily = Math.max(0, Math.floor(info.executableDaily || 0));
+                const canSwipe = finalSuggestion > 0;
                 return {
                     cardName: c.name,
                     tail: c.tailNum ? `(${c.tailNum})` : '',
-                    range,
-                    mid,
+                    finalSuggestion,
+                    daily,
                     canSwipe,
                     usageRate: per.usageRate || 0,
                     daysToNextBill,
-                    freeDays
+                    freeDays,
+                    limited: info.limitedByAvailability,
+                    targetRemain: info.targetRemain || 0,
+                    realAvailable: info.realAvailable || 0
                 };
             }).sort((a, b) => b.freeDays - a.freeDays);
             const best = todaySuggestions.find(s => s.canSwipe) || todaySuggestions[0] || null;
@@ -827,16 +859,20 @@ function populateRecCardFilter() {
             let todayCopyText = '';
             if (best) {
                 if (best.canSwipe) {
-                    todaySuggestText = `${best.cardName} · 建议 ¥${best.range.min.toLocaleString()}-${best.range.max.toLocaleString()}（免息期约 ${best.freeDays} 天）`;
-                    todayCopyText = `今日刷卡建议：${best.cardName} ¥${best.mid.toLocaleString()}（范围 ¥${best.range.min.toLocaleString()}-${best.range.max.toLocaleString()}）`;
+                    todaySuggestText = `${best.cardName} · 建议 ¥${best.finalSuggestion.toLocaleString()}（日 ¥${best.daily.toLocaleString()}，免息期约 ${best.freeDays} 天）`;
+                    todayCopyText = `今日刷卡建议：${best.cardName} ¥${best.finalSuggestion.toLocaleString()}，日均 ¥${best.daily.toLocaleString()}（距账单日 ${best.daysToNextBill} 天）`;
+                    if (best.limited) {
+                        todaySuggestText += ' · 受可用额度限制已下调';
+                        todayCopyText += '。受可用额度限制，建议金额已下调';
+                    }
                 } else {
                     todaySuggestText = `${best.cardName} · 今日不刷（额度接近上限或需控额）`;
                     todayCopyText = todaySuggestText;
                 }
             }
             const todayRecoHtml = (todaySuggestions || []).map(s => {
-                const amtLabel = s.canSwipe ? `¥${s.range.min.toLocaleString()} - ${s.range.max.toLocaleString()}` : '今日不刷';
-                const subNote = s.canSwipe ? `免息期约 ${s.freeDays} 天 · 距账单日 ${s.daysToNextBill} 天` : '额度接近上限或无需刷';
+                const amtLabel = s.canSwipe ? `¥${s.finalSuggestion.toLocaleString()}（日 ¥${s.daily.toLocaleString()}）` : '今日不刷';
+                const subNote = s.canSwipe ? `免息期约 ${s.freeDays} 天 · 距账单日 ${s.daysToNextBill} 天${s.limited ? ' · 受额度限制' : ''}` : '额度接近上限或无需刷';
                 return `
                         <div class="today-reco-row ${s.isBest ? 'is-best' : ''}">
                             <div>
@@ -931,14 +967,14 @@ function populateRecCardFilter() {
                 const per = (stats.perCard || []).find(pc => pc.cardName === c.name) || {};
                 const tail = c.tailNum ? `(${c.tailNum})` : '';
                 const usage = per.usageRate || 0;
-                const spent = per.periodExpense || 0;
+                const spent = per.cycleUsed ?? ((per.periodExpense || 0) - (per.periodRefund || 0));
                 const repaid = per.periodRepay || 0;
                 const txCount = per.usedCount || 0;
                 return `
                     <div class="card-row" data-card-name="${c.name}">
                         <div>
                             <div class="card-row-title">${c.name} ${tail}</div>
-                            <div class="card-row-sub">本期已刷 ${fmtMoney(spent)} · 已还 ${fmtMoney(repaid)} · 笔数 ${txCount}</div>
+                            <div class="card-row-sub">本期进度 ${fmtMoney(spent)} · 已还 ${fmtMoney(repaid)} · 笔数 ${txCount}</div>
                         </div>
                         <div class="card-row-metrics">
                             <div class="big">${fmtPct(usage)}</div>
@@ -1042,13 +1078,13 @@ function populateRecCardFilter() {
                     </div>
                     <div class="kpi-item">
                         <div class="kpi-label">剩余额度</div>
-                        <div class="kpi-value">${fmtMoney(per.remaining || 0)}</div>
+                        <div class="kpi-value">${fmtMoney((per.realAvailable ?? per.remaining) || 0)}</div>
                         <div class="kpi-sub">可用</div>
                     </div>
                     <div class="kpi-item">
-                        <div class="kpi-label">本期已刷</div>
-                        <div class="kpi-value">${fmtMoney(per.periodExpense || 0)}</div>
-                        <div class="kpi-sub">消费</div>
+                        <div class="kpi-label">本期进度</div>
+                        <div class="kpi-value">${fmtMoney(per.cycleUsed || 0)}</div>
+                        <div class="kpi-sub">消费-退款 · 使用率 ${((per.cycleUsageRate || 0)*100).toFixed(0)}%</div>
                     </div>
                     <div class="kpi-item">
                         <div class="kpi-label">本期已还</div>
