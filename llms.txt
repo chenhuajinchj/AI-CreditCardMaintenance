@@ -1,0 +1,13 @@
+# AI-CreditCardMaintenance
+
+> AI-CreditCardMaintenance is an offline-capable PWA to track credit card spending, repayments, and utilization across multiple cards, backed by Supabase.
+
+A no-build progressive web app that helps users manage multiple credit cards in one dashboard. Key capabilities: billing-cycle utilization tracking, interest-free window recommendation, two-stage repayment planning, card health metrics (transaction count, merchant diversity, scene diversity), and automatic offline fallback via localStorage. Built with vanilla JS + Chart.js + supabase-js loaded from CDN; data stored as JSONB in Supabase with RLS isolation.
+
+## Documentation
+- [README (English)](README.md): Full feature description, quick start, self-hosting SQL, FAQ, and security notes in English.
+- [中文文档 (README.zh-CN.md)](README.zh-CN.md): 完整功能说明、快速开始、自部署 SQL、常见问题与安全说明（中文）。
+
+## Links
+- Repository: https://github.com/chenhuajinchj/AI-CreditCardMaintenance
+- Live demo: https://ai-credit-card-maintenance.vercel.app
